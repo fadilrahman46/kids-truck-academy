@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#BCE3FF"/>
+      <stop offset="68%" stop-color="#E6F5FF"/>
+      <stop offset="68%" stop-color="#7CCB54"/>
+      <stop offset="100%" stop-color="#5EB03A"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#sky)"/>
+  <!-- Sun -->
+  <circle cx="404" cy="112" r="44" fill="#FACC15"/>
+  <!-- Road -->
+  <rect x="0" y="346" width="512" height="76" fill="#536275"/>
+  <rect x="40" y="378" width="76" height="12" rx="6" fill="#F8FAFC"/>
+  <rect x="180" y="378" width="76" height="12" rx="6" fill="#F8FAFC"/>
+  <rect x="320" y="378" width="76" height="12" rx="6" fill="#F8FAFC"/>
+  <!-- Friendly Dump Truck Silhouette (inside safe zone) -->
+  <!-- Dump Bed -->
+  <rect x="96" y="210" width="176" height="114" rx="20" fill="#F59E0B" stroke="#B45309" stroke-width="10"/>
+  <!-- Cab -->
+  <rect x="278" y="226" width="122" height="98" rx="22" fill="#2563EB" stroke="#1D4ED8" stroke-width="10"/>
+  <!-- Windshield -->
+  <rect x="314" y="244" width="66" height="44" rx="10" fill="#BAE6FD"/>
+  <!-- Bumper & Headlight -->
+  <rect x="392" y="294" width="22" height="26" rx="8" fill="#E2E8F0"/>
+  <circle cx="394" cy="272" r="14" fill="#FEF08A"/>
+  <circle cx="396" cy="272" r="5" fill="#1E293B"/>
+  <!-- Chassis -->
+  <rect x="108" y="318" width="286" height="22" rx="8" fill="#334155"/>
+  <!-- Wheels -->
+  <circle cx="164" cy="348" r="42" fill="#1E293B"/>
+  <circle cx="164" cy="348" r="22" fill="#E2E8F0"/>
+  <circle cx="164" cy="348" r="10" fill="#F59E0B"/>
+  <circle cx="338" cy="348" r="42" fill="#1E293B"/>
+  <circle cx="338" cy="348" r="22" fill="#E2E8F0"/>
+  <circle cx="338" cy="348" r="10" fill="#F59E0B"/>
+</svg>

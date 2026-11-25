@@ -1,0 +1,6 @@
+{
+  "name": "Kota Kendaraan Ceria 3D",
+  "description": "Game simulasi 3D interaktif berbasis Three.js untuk anak usia 2-6 tahun dengan 6 kendaraan edukatif, suara bilingual Indonesia-Inggris, dan dua mode usia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

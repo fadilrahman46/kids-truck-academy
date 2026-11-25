@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", ui-rounded, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+@keyframes gentle-wiggle {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+.animate-wiggle {
+  animation: gentle-wiggle 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.92) translateY(8px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.animate-pop-in {
+  animation: pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes confetti-fall-left {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -12vh, 0) rotate(0deg);
+  }
+  10% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(-48px, 108vh, 0) rotate(540deg);
+  }
+}
+
+@keyframes confetti-fall-right {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -12vh, 0) rotate(0deg);
+  }
+  10% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(52px, 108vh, 0) rotate(-520deg);
+  }
+}
+
+@keyframes confetti-fall-sway {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -12vh, 0) rotate(0deg);
+  }
+  10% {
+    opacity: 1;
+  }
+  35% {
+    transform: translate3d(28px, 34vh, 0) rotate(180deg);
+  }
+  70% {
+    transform: translate3d(-24px, 72vh, 0) rotate(390deg);
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(18px, 108vh, 0) rotate(600deg);
+  }
+}
+
+.confetti-left {
+  animation-name: confetti-fall-left;
+  animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
+.confetti-right {
+  animation-name: confetti-fall-right;
+  animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
+.confetti-sway {
+  animation-name: confetti-fall-sway;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-wiggle,
+  .animate-pop-in,
+  .confetti-left,
+  .confetti-right,
+  .confetti-sway {
+    animation: none;
+  }
+
+  .confetti-layer {
+    display: none;
+  }
+}
