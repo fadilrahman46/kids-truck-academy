@@ -5,6 +5,17 @@
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
+:root {
+  --paper-base: #fdf8ee;
+  --paper-warm: #f5ebd7;
+  --paper-deep: #ece0c8;
+  --wood-light: #dfbe90;
+  --wood-mid: #b8834a;
+  --wood-dark: #7a4b21;
+  --ink-primary: #2d1f14;
+  --ink-secondary: #68503b;
+}
+
 @layer base {
   html,
   body,
@@ -15,6 +26,7 @@
     padding: 0;
     overflow: hidden;
     font-family: var(--font-sans);
+    color: var(--ink-primary);
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
@@ -22,6 +34,102 @@
 
 .font-display {
   font-family: var(--font-display);
+}
+
+/* Warm tactile children's storybook cotton paper surface (no heavy backdrop-filter over WebGL) */
+.storybook-paper {
+  background-color: var(--paper-base);
+  background-image:
+    radial-gradient(rgba(122, 75, 33, 0.045) 1px, transparent 0),
+    linear-gradient(180deg, rgba(255, 253, 248, 0.96) 0%, rgba(247, 238, 220, 0.97) 100%);
+  background-size: 14px 14px, 100% 100%;
+  border: 2px solid #d4b98f;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 8px 22px -6px rgba(66, 40, 14, 0.22),
+    0 2px 6px rgba(66, 40, 14, 0.1);
+}
+
+/* Warm honey-oak wooden framed top bar */
+.storybook-wood-bar {
+  background-color: #fbf3e2;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(164, 114, 62, 0.03) 0px,
+      rgba(164, 114, 62, 0.03) 18px,
+      transparent 18px,
+      transparent 42px
+    ),
+    linear-gradient(180deg, #fffaf0 0%, #f4e6cb 100%);
+  border-bottom: 3px solid #b6844e;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 4px 14px -4px rgba(66, 40, 14, 0.2);
+}
+
+/* Carved honey-oak wooden tray for segmented controls */
+.storybook-wood-tray {
+  background: linear-gradient(180deg, #e5cca3 0%, #ebd7b5 100%);
+  border: 1.5px solid #c39a66;
+  box-shadow: inset 0 2px 4px rgba(90, 54, 21, 0.18);
+}
+
+/* Warm stitched storybook card slot */
+.storybook-card {
+  background: linear-gradient(180deg, #fffdf8 0%, #f7edd9 100%);
+  border: 1.5px solid #d8bf97;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 5px rgba(74, 46, 18, 0.09);
+}
+
+/* Tactile beveled push-button feel (snappy <= 140ms press depth) */
+.btn-tactile {
+  border-bottom-width: 3px;
+  border-bottom-color: rgba(45, 26, 10, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 2px 5px rgba(56, 34, 12, 0.16);
+  transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1), filter 120ms ease;
+}
+
+.btn-tactile:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
+.btn-tactile:active:not(:disabled) {
+  transform: translateY(2px) scale(0.985);
+}
+
+/* Warm parchment & wood secondary button */
+.btn-wood-secondary {
+  background: linear-gradient(180deg, #fffdf7 0%, #f2e4c9 100%);
+  border: 1.5px solid #cba877;
+  border-bottom-width: 3px;
+  border-bottom-color: #a77c48;
+  color: var(--ink-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  transition: transform 120ms cubic-bezier(0.16, 1, 0.3, 1), background-color 120ms ease;
+}
+
+.btn-wood-secondary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff 0%, #f7ebd3 100%);
+}
+
+.btn-wood-secondary:active:not(:disabled) {
+  transform: translateY(2px) scale(0.985);
+}
+
+/* Carved wood ribbon / handle */
+.storybook-wood-tab {
+  background: linear-gradient(180deg, #d6a66c 0%, #b47c3f 100%);
+  border: 1.5px solid #8a5a28;
+  border-bottom: none;
+  color: #fffdf7;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 212, 0.45),
+    0 -2px 6px rgba(64, 38, 12, 0.14);
 }
 
 @keyframes gentle-wiggle {
@@ -130,5 +238,55 @@
 
   .confetti-layer {
     display: none;
+  }
+}
+
+/* Compact Mobile-Landscape HUD (keeps >=55% vertical 3D stage unobstructed on 360-450px tall phones) */
+@media (max-height: 480px) {
+  .compact-topbar {
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .compact-prompt-wrap {
+    margin-top: 0.3rem;
+  }
+
+  .compact-prompt-card {
+    padding: 0.35rem 0.65rem;
+    gap: 0.5rem;
+  }
+
+  .compact-prompt-sub {
+    display: none;
+  }
+
+  .compact-dock-wrap {
+    bottom: 0.3rem;
+  }
+
+  .compact-dock-card {
+    padding: 0.45rem 0.65rem;
+    max-height: 40vh;
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .compact-garage-grid {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+
+  .compact-garage-card {
+    min-width: 150px;
+    padding: 0.4rem 0.5rem;
+  }
+
+  .compact-garage-thumb {
+    height: 3.1rem;
   }
 }

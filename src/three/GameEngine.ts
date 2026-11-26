@@ -10,7 +10,8 @@ import {
 } from '../types/game';
 import { soundEngine } from '../audio/soundEngine';
 import { buildStorybookWorld, type WorldEnvironment } from './world';
-import { buildTruck, type TruckRig } from './trucks';
+import { buildTruck, disposeSharedTruckAssets, type TruckRig } from './trucks';
+import { createMixerStripeTexture, disposeSharedStorybookTextures } from './textures';
 import { createMissionController, type ActiveMissionController } from './missionScenes';
 
 export interface EngineCallbacks {
@@ -41,7 +42,8 @@ export class GameEngine {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
-  private clock: THREE.Clock;
+  private timer: THREE.Timer;
+  private envRenderTarget: THREE.WebGLRenderTarget | null = null;
   private raycaster: THREE.Raycaster;
   private isSoftwareGl: boolean;
   private maxAnisotropy: number;
@@ -67,6 +69,8 @@ export class GameEngine {
   private confettiTimer = 0;
 
   private pointerDownPos = { x: 0, y: 0 };
+  private isDraggingSpray = false;
+  private lastDragSprayTime = 0;
 
   constructor(container: HTMLElement, callbacks: EngineCallbacks) {
     this.container = container;
@@ -75,12 +79,14 @@ export class GameEngine {
     // Detect software WebGL (SwiftShader/llvmpipe) strictly for rendering cost & loop pacing
     this.isSoftwareGl = (() => {
       try {
-        const gl = document.createElement('canvas').getContext('webgl2');
+        const probeCanvas = document.createElement('canvas');
+        probeCanvas.width = 1;
+        probeCanvas.height = 1;
+        const gl = probeCanvas.getContext('webgl2');
         if (!gl) return true;
         const ext = gl.getExtension('WEBGL_debug_renderer_info');
         const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
         const gpu = String(gl.getParameter(param));
-        gl.getExtension('WEBGL_lose_context')?.loseContext();
         return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
       } catch {
         return true;
@@ -96,11 +102,11 @@ export class GameEngine {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.toneMappingExposure = 1.03;
     this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(width, height);
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.maxAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
@@ -108,7 +114,10 @@ export class GameEngine {
 
     // Procedural Studio Environment Reflection (RoomEnvironment via PMREMGenerator)
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const envScene = new RoomEnvironment();
+    this.envRenderTarget = pmrem.fromScene(envScene, 0.04);
+    this.scene.environment = this.envRenderTarget.texture;
+    envScene.dispose();
     pmrem.dispose();
 
     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 180);
@@ -128,7 +137,8 @@ export class GameEngine {
       this.camTransitionActive = false;
     });
 
-    this.clock = new THREE.Clock();
+    this.timer = new THREE.Timer();
+    this.timer.connect(document);
     this.raycaster = new THREE.Raycaster();
 
     // Build sunlit 3D storybook town diorama
@@ -151,7 +161,7 @@ export class GameEngine {
     this.confettiMesh = new THREE.InstancedMesh(confettiGeo, confettiMat, count);
     this.confettiMesh.frustumCulled = false;
     this.confettiMesh.visible = false;
-    const palette = ['#EF4444', '#FACC15', '#3B82F6', '#22C55E', '#A855F7', '#F97316'];
+    const palette = ['#DF5342', '#F3C443', '#3E82C6', '#4CA95E', '#A168C4', '#E88836'];
     const c = new THREE.Color();
     for (let i = 0; i < count; i++) {
       c.set(palette[i % palette.length]);
@@ -178,8 +188,11 @@ export class GameEngine {
   private bindEvents(): void {
     const dom = this.renderer.domElement;
     window.addEventListener('resize', this.onResize);
+    window.addEventListener('pointerup', this.onPointerCancel);
     dom.addEventListener('pointerdown', this.onPointerDown);
+    dom.addEventListener('pointermove', this.onPointerMove);
     dom.addEventListener('pointerup', this.onPointerUp);
+    dom.addEventListener('pointercancel', this.onPointerCancel);
     dom.addEventListener('webglcontextlost', this.onWebglLost);
     dom.addEventListener('webglcontextrestored', this.onWebglRestored);
   }
@@ -205,20 +218,80 @@ export class GameEngine {
     this.renderer.setSize(w, h);
   };
 
+  private setPointerNdcFromEvent(e: PointerEvent): void {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    _pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    _pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  }
+
   private onPointerDown = (e: PointerEvent): void => {
     soundEngine.unlock();
     this.pointerDownPos = { x: e.clientX, y: e.clientY };
+
+    // P1-4: Start continuous drag-to-spray when pressing on flames or burning house during Pemadam SPRAY phase
+    if (
+      this.mode === 'MISSION' &&
+      this.activeMission?.supportsDragSpray?.() &&
+      this.activeMission.raycastTargets.length > 0
+    ) {
+      this.setPointerNdcFromEvent(e);
+      this.raycaster.setFromCamera(_pointerNdc, this.camera);
+      const hits = this.raycaster.intersectObjects(this.activeMission.raycastTargets, true);
+      if (hits.length > 0) {
+        const hit = hits[0];
+        if (
+          typeof hit.object.userData.flameIndex === 'number' ||
+          hit.object.userData.isSpraySurface
+        ) {
+          this.isDraggingSpray = true;
+          this.controls.enabled = false;
+          this.lastDragSprayTime = performance.now();
+          this.activeMission.handleDragSpray?.(hit.point, hit.object);
+        }
+      }
+    }
+  };
+
+  private onPointerMove = (e: PointerEvent): void => {
+    if (!this.isDraggingSpray) return;
+    if (!this.activeMission?.supportsDragSpray?.()) {
+      this.onPointerCancel();
+      return;
+    }
+    const now = performance.now();
+    if (now - this.lastDragSprayTime < 40) return;
+    this.lastDragSprayTime = now;
+
+    this.setPointerNdcFromEvent(e);
+    this.raycaster.setFromCamera(_pointerNdc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.activeMission.raycastTargets, true);
+    if (hits.length > 0) {
+      this.activeMission.handleDragSpray?.(hits[0].point, hits[0].object);
+    }
+  };
+
+  private onPointerCancel = (): void => {
+    if (this.isDraggingSpray) {
+      this.isDraggingSpray = false;
+      this.controls.enabled = true;
+      this.activeMission?.stopDragSpray?.();
+    }
   };
 
   private onPointerUp = (e: PointerEvent): void => {
+    if (this.isDraggingSpray) {
+      this.isDraggingSpray = false;
+      this.controls.enabled = true;
+      this.activeMission?.stopDragSpray?.();
+      return;
+    }
+
     const dx = e.clientX - this.pointerDownPos.x;
     const dy = e.clientY - this.pointerDownPos.y;
     // Ignore drag-orbit gestures (>14px)
     if (dx * dx + dy * dy > 196) return;
 
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    _pointerNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-    _pointerNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this.setPointerNdcFromEvent(e);
     this.raycaster.setFromCamera(_pointerNdc, this.camera);
 
     if (this.mode === 'GARAGE') {
@@ -246,7 +319,30 @@ export class GameEngine {
     soundEngine.speakBilingual(cfg.nameId, cfg.nameEn);
   }
 
+  private resetTruckRig(rig: TruckRig): void {
+    rig.bodyGroup.position.set(0, 0, 0);
+    rig.bodyGroup.rotation.set(0, 0, 0);
+    if (rig.sirenLeftMat) rig.sirenLeftMat.emissiveIntensity = 0.25;
+    if (rig.sirenRightMat) rig.sirenRightMat.emissiveIntensity = 0.25;
+    if (rig.nozzleGroup) rig.nozzleGroup.rotation.set(0, 0, 0);
+    if (rig.cableMesh) rig.cableMesh.scale.y = 1.3;
+    if (rig.hookGroup) rig.hookGroup.position.set(-2.55, 1.25, 0);
+    if (rig.waterFillMesh) rig.waterFillMesh.scale.y = 0.05;
+    if (rig.hopperGroup) rig.hopperGroup.rotation.set(0, 0, 0);
+    if (rig.bedGroup) rig.bedGroup.rotation.set(0, 0, 0);
+    if (rig.turretGroup) rig.turretGroup.rotation.set(0, 0, 0);
+    if (rig.boomGroup) rig.boomGroup.rotation.set(0, 0, 0);
+    if (rig.chuteGroup) rig.chuteGroup.rotation.set(0, 0, 0);
+    if (rig.id === 'molen' && rig.drumMaterial) {
+      const oldMap = rig.drumMaterial.map;
+      rig.drumMaterial.map = createMixerStripeTexture('#E8951B', this.maxAnisotropy);
+      rig.drumMaterial.needsUpdate = true;
+      oldMap?.dispose();
+    }
+  }
+
   public enterGarage(): void {
+    this.isDraggingSpray = false;
     this.clearActiveMission();
     this.mode = 'GARAGE';
     this.confettiActive = false;
@@ -257,8 +353,7 @@ export class GameEngine {
       rig.root.visible = true;
       rig.root.position.set(...cfg.garagePos);
       rig.root.rotation.set(0, cfg.garageRotY, 0);
-      rig.bodyGroup.position.set(0, 0, 0);
-      rig.bodyGroup.rotation.set(0, 0, 0);
+      this.resetTruckRig(rig);
     }
 
     this.controls.enabled = true;
@@ -268,6 +363,7 @@ export class GameEngine {
   }
 
   public startMission(vehicleId: VehicleId, ageMode: AgeMode): void {
+    this.isDraggingSpray = false;
     this.clearActiveMission();
     this.mode = 'MISSION';
     this.confettiActive = false;
@@ -279,6 +375,7 @@ export class GameEngine {
     }
 
     const activeTruck = this.trucks.get(vehicleId)!;
+    this.resetTruckRig(activeTruck);
     const ctrl = createMissionController(vehicleId, activeTruck, ageMode, this.maxAnisotropy, {
       onSnapshot: (snap) => this.callbacks.onMissionSnapshot(snap),
       onCelebrate: (vid) => {
@@ -355,8 +452,9 @@ export class GameEngine {
   private tick = (): void => {
     if (this.disposed || this.contextLost) return;
 
-    const dt = Math.min(this.clock.getDelta(), 0.08);
-    const elapsed = this.clock.getElapsedTime();
+    this.timer.update();
+    const dt = Math.min(this.timer.getDelta(), 0.08);
+    const elapsed = this.timer.getElapsed();
 
     // Drift fluffy storybook clouds slowly across the sky
     this.world.clouds.forEach((cloud, idx) => {
@@ -472,17 +570,43 @@ export class GameEngine {
     window.clearTimeout(this.frameId);
     this.clearActiveMission();
     window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('pointerup', this.onPointerCancel);
     const dom = this.renderer.domElement;
     dom.removeEventListener('pointerdown', this.onPointerDown);
+    dom.removeEventListener('pointermove', this.onPointerMove);
     dom.removeEventListener('pointerup', this.onPointerUp);
+    dom.removeEventListener('pointercancel', this.onPointerCancel);
     dom.removeEventListener('webglcontextlost', this.onWebglLost);
     dom.removeEventListener('webglcontextrestored', this.onWebglRestored);
+    this.timer.dispose();
     this.controls.dispose();
     this.world.dispose();
+    for (const rig of this.trucks.values()) {
+      this.scene.remove(rig.root);
+      if (rig.drumMaterial?.map) {
+        rig.drumMaterial.map.dispose();
+      }
+      rig.root.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const m = obj as THREE.Mesh;
+          m.geometry?.dispose();
+          if (Array.isArray(m.material)) {
+            m.material.forEach((mat) => mat.dispose());
+          } else {
+            m.material?.dispose();
+          }
+        }
+      });
+    }
+    this.trucks.clear();
+    disposeSharedTruckAssets();
+    disposeSharedStorybookTextures();
     this.confettiMesh.geometry.dispose();
     (this.confettiMesh.material as THREE.Material).dispose();
-    if (this.scene.environment) {
-      this.scene.environment.dispose();
+    if (this.envRenderTarget) {
+      this.envRenderTarget.dispose();
+      this.envRenderTarget = null;
+      this.scene.environment = null;
     }
     this.renderer.dispose();
     if (dom.parentElement === this.container) {

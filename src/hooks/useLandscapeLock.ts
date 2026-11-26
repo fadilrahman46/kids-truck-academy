@@ -11,7 +11,12 @@ export function useLandscapeLock() {
 
   const lockLandscape = useCallback(async (withFullscreen = false) => {
     try {
-      if (withFullscreen && document.documentElement.requestFullscreen && !document.fullscreenElement) {
+      if (
+        withFullscreen &&
+        document.fullscreenEnabled &&
+        document.documentElement.requestFullscreen &&
+        !document.fullscreenElement
+      ) {
         await document.documentElement.requestFullscreen();
       }
     } catch {
@@ -31,8 +36,12 @@ export function useLandscapeLock() {
   }, []);
 
   useEffect(() => {
-    // Best-effort silent lock attempt on mount (succeeds in installed PWA mode)
-    void lockLandscape(false);
+    // Only attempt silent orientation lock on mount when running as a top-level installed PWA
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+    const isTopLevel = window.self === window.top;
+    if (isStandalone && isTopLevel) {
+      void lockLandscape(false);
+    }
 
     const handleChange = () => {
       setIsPortrait(checkPortrait());

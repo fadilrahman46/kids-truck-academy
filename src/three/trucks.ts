@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import type { CargoTypeId, VehicleId, WasteKind } from '../types/game';
-import { createContactShadowTexture, createMixerStripeTexture } from './textures';
+import {
+  createBrickTexture,
+  createContactShadowTexture,
+  createGouachePaintTexture,
+  createMixerStripeTexture,
+  createWoodPlankTexture,
+  getPaperBumpTexture,
+} from './textures';
 
 export interface TruckRig {
   id: VehicleId;
@@ -37,6 +44,27 @@ function getShadowTexture(): THREE.CanvasTexture {
   return sharedShadowTex;
 }
 
+export function disposeSharedTruckAssets(): void {
+  if (sharedShadowTex) {
+    sharedShadowTex.dispose();
+    sharedShadowTex = null;
+  }
+}
+
+function makeGouacheMat(
+  hex: string,
+  maxAnisotropy: number,
+  opts?: { roughness?: number; metalness?: number; bumpScale?: number },
+): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    map: createGouachePaintTexture(hex, maxAnisotropy),
+    bumpMap: getPaperBumpTexture(maxAnisotropy),
+    bumpScale: opts?.bumpScale ?? 0.018,
+    roughness: opts?.roughness ?? 0.58,
+    metalness: opts?.metalness ?? 0.05,
+  });
+}
+
 function makeRoundedBox(
   w: number,
   h: number,
@@ -68,22 +96,27 @@ function makeRoundedBox(
   return geo;
 }
 
-function createWheel(radius = 0.44, width = 0.28): THREE.Group {
+function createWheel(maxAnisotropy: number, radius = 0.44, width = 0.28): THREE.Group {
   const wheel = new THREE.Group();
+  const paperBump = getPaperBumpTexture(maxAnisotropy);
   const tireMat = new THREE.MeshStandardMaterial({
-    color: '#2B3340',
-    roughness: 0.88,
-    metalness: 0.04,
+    color: '#3B3430',
+    bumpMap: paperBump,
+    bumpScale: 0.025,
+    roughness: 0.9,
+    metalness: 0.02,
   });
   const rimMat = new THREE.MeshStandardMaterial({
-    color: '#E2E8F0',
-    roughness: 0.22,
-    metalness: 0.78,
+    color: '#F2E7CF',
+    bumpMap: paperBump,
+    bumpScale: 0.01,
+    roughness: 0.48,
+    metalness: 0.24,
   });
   const hubMat = new THREE.MeshStandardMaterial({
-    color: '#F59E0B',
-    roughness: 0.35,
-    metalness: 0.4,
+    color: '#D9942A',
+    roughness: 0.42,
+    metalness: 0.38,
   });
 
   const tire = new THREE.Mesh(
@@ -103,7 +136,7 @@ function createWheel(radius = 0.44, width = 0.28): THREE.Group {
   wheel.add(rim);
 
   const hub = new THREE.Mesh(
-    new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, width + 0.06, 10),
+    new THREE.CylinderGeometry(radius * 0.24, radius * 0.24, width + 0.06, 10),
     hubMat,
   );
   hub.rotation.x = Math.PI / 2;
@@ -111,7 +144,7 @@ function createWheel(radius = 0.44, width = 0.28): THREE.Group {
 
   // Small spoke bar so wheel rotation is super obvious to kids!
   const spoke = new THREE.Mesh(
-    new THREE.BoxGeometry(radius * 0.86, 0.08, width + 0.045),
+    new THREE.BoxGeometry(radius * 0.84, 0.08, width + 0.045),
     hubMat,
   );
   wheel.add(spoke);
@@ -125,16 +158,19 @@ function addBaseChassisAndCab(
   wheels: THREE.Object3D[],
   cabColorHex: string,
   stripeColorHex: string,
+  maxAnisotropy: number,
   wheelCount: 4 | 6 = 4,
 ): void {
-  // Soft contact shadow directly under truck at y = 0.035
+  const paperBump = getPaperBumpTexture(maxAnisotropy);
+
+  // Soft warm sepia contact shadow directly under truck at y = 0.035
   const shadowPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(4.4, 2.5),
+    new THREE.PlaneGeometry(4.5, 2.6),
     new THREE.MeshBasicMaterial({
       map: getShadowTexture(),
       transparent: true,
       depthWrite: false,
-      opacity: 0.55,
+      opacity: 0.58,
     }),
   );
   shadowPlane.rotation.x = -Math.PI / 2;
@@ -142,54 +178,67 @@ function addBaseChassisAndCab(
   root.add(shadowPlane);
 
   const chassisMat = new THREE.MeshStandardMaterial({
-    color: '#334155',
-    roughness: 0.72,
-    metalness: 0.25,
+    color: '#463C36',
+    bumpMap: paperBump,
+    bumpScale: 0.02,
+    roughness: 0.78,
+    metalness: 0.16,
   });
-  const cabMat = new THREE.MeshStandardMaterial({
-    color: cabColorHex,
-    roughness: 0.42,
-    metalness: 0.08,
-  });
-  const stripeMat = new THREE.MeshStandardMaterial({
-    color: stripeColorHex,
-    roughness: 0.48,
-    metalness: 0.05,
+  const cabMat = makeGouacheMat(cabColorHex, maxAnisotropy, { roughness: 0.56, metalness: 0.05 });
+  const stripeMat = makeGouacheMat(stripeColorHex, maxAnisotropy, {
+    roughness: 0.62,
+    metalness: 0.03,
   });
   const glassMat = new THREE.MeshStandardMaterial({
-    color: '#BAE6FD',
-    roughness: 0.12,
-    metalness: 0.15,
+    color: '#C7E5F5',
+    emissive: '#FFF5DA',
+    emissiveIntensity: 0.08,
+    roughness: 0.18,
+    metalness: 0.1,
   });
-  const chromeMat = new THREE.MeshStandardMaterial({
-    color: '#F1F5F9',
-    roughness: 0.2,
-    metalness: 0.82,
+  const brassMat = new THREE.MeshStandardMaterial({
+    color: '#E6C27A',
+    roughness: 0.34,
+    metalness: 0.56,
+  });
+  const creamMetalMat = new THREE.MeshStandardMaterial({
+    color: '#F2E7D3',
+    bumpMap: paperBump,
+    bumpScale: 0.012,
+    roughness: 0.38,
+    metalness: 0.42,
   });
   const headlightMat = new THREE.MeshStandardMaterial({
-    color: '#FEF08A',
-    emissive: '#FDE047',
-    emissiveIntensity: 0.4,
-    roughness: 0.2,
-    metalness: 0.1,
+    color: '#FFF4C2',
+    emissive: '#FDE073',
+    emissiveIntensity: 0.45,
+    roughness: 0.24,
+    metalness: 0.08,
   });
 
   // Main Chassis Beam
-  const chassis = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.34, 1.48), chassisMat);
+  const chassis = new THREE.Mesh(new THREE.BoxGeometry(3.62, 0.34, 1.48), chassisMat);
   chassis.position.set(0, 0.58, 0);
   chassis.castShadow = true;
   chassis.receiveShadow = true;
   bodyGroup.add(chassis);
 
   // Front Beveled Cab (+X is front of truck)
-  const cab = new THREE.Mesh(makeRoundedBox(1.25, 1.32, 1.46, 0.22), cabMat);
+  const cab = new THREE.Mesh(makeRoundedBox(1.26, 1.32, 1.46, 0.22), cabMat);
   cab.position.set(1.18, 1.38, 0);
   cab.castShadow = true;
   cab.receiveShadow = true;
   bodyGroup.add(cab);
 
+  // Storybook roof brow / sun visor above windshield
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 1.48), stripeMat);
+  visor.position.set(1.86, 1.98, 0);
+  visor.rotation.z = -0.18;
+  visor.castShadow = true;
+  bodyGroup.add(visor);
+
   // Cab Nose Hood
-  const hood = new THREE.Mesh(makeRoundedBox(0.55, 0.72, 1.4, 0.15), cabMat);
+  const hood = new THREE.Mesh(makeRoundedBox(0.56, 0.72, 1.4, 0.15), cabMat);
   hood.position.set(1.86, 1.08, 0);
   hood.castShadow = true;
   bodyGroup.add(hood);
@@ -199,7 +248,18 @@ function addBaseChassisAndCab(
   stripe.position.set(1.18, 1.0, 0);
   bodyGroup.add(stripe);
 
-  // Windshield
+  // Rounded Front Wheel-Arch Fenders (adds cozy illustrated truck silhouette)
+  const fenderGeo = new THREE.CylinderGeometry(0.52, 0.52, 0.24, 14, 1, false, 0, Math.PI);
+  for (const sz of [-0.74, 0.74]) {
+    const fender = new THREE.Mesh(fenderGeo, stripeMat);
+    fender.rotation.x = Math.PI / 2;
+    fender.rotation.y = Math.PI / 2;
+    fender.position.set(1.25, 0.52, sz);
+    fender.castShadow = true;
+    bodyGroup.add(fender);
+  }
+
+  // Windshield + warm frame border
   const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.54, 1.24), glassMat);
   windshield.position.set(1.8, 1.62, 0);
   windshield.rotation.z = 0.12;
@@ -210,22 +270,37 @@ function addBaseChassisAndCab(
   sideWin.position.set(1.26, 1.58, 0);
   bodyGroup.add(sideWin);
 
-  // Chrome front bumper
-  const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 1.66), chromeMat);
+  // Cute vintage side mirrors on slender brackets
+  for (const sz of [-0.88, 0.88]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.2), chassisMat);
+    arm.position.set(1.62, 1.54, sz * 0.92);
+    bodyGroup.add(arm);
+    const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.26, 0.14), creamMetalMat);
+    mirror.position.set(1.62, 1.58, sz);
+    bodyGroup.add(mirror);
+  }
+
+  // Warm cream-metal front bumper with rounded brass end caps
+  const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 1.68), creamMetalMat);
   bumper.position.set(2.14, 0.68, 0);
   bumper.castShadow = true;
   bodyGroup.add(bumper);
 
-  // Friendly expressive headlight eyes!
+  // Friendly expressive headlight eyes with brass lantern bezels!
   for (const side of [-0.46, 0.46]) {
-    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.12, 14), headlightMat);
+    const bezel = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.1, 14), brassMat);
+    bezel.rotation.z = Math.PI / 2;
+    bezel.position.set(2.12, 1.06, side);
+    bodyGroup.add(bezel);
+
+    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.12, 14), headlightMat);
     lamp.rotation.z = Math.PI / 2;
     lamp.position.set(2.14, 1.06, side);
     bodyGroup.add(lamp);
 
     // Cute pupil dot inside headlight for friendly storybook character
     const pupil = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.06, 0.06, 0.14, 10),
+      new THREE.CylinderGeometry(0.058, 0.058, 0.14, 10),
       chassisMat,
     );
     pupil.rotation.z = Math.PI / 2;
@@ -233,22 +308,30 @@ function addBaseChassisAndCab(
     bodyGroup.add(pupil);
   }
 
-  // Cheerful chrome grille
-  const grille = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.26, 0.52), chromeMat);
-  grille.position.set(2.16, 0.94, 0);
+  // Cheerful slatted vintage grille
+  const grille = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.28, 0.54), brassMat);
+  grille.position.set(2.15, 0.94, 0);
   bodyGroup.add(grille);
+  for (let i = -1; i <= 1; i++) {
+    const slat = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.46), chassisMat);
+    slat.position.set(2.16, 0.94 + i * 0.08, 0);
+    bodyGroup.add(slat);
+  }
 
-  // Exhaust Pipe behind cab
-  const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.2, 10), chromeMat);
-  exhaust.position.set(0.42, 1.45, -0.78);
+  // Exhaust Pipe behind cab with brass cap
+  const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.24, 10), creamMetalMat);
+  exhaust.position.set(0.42, 1.46, -0.78);
   exhaust.castShadow = true;
   bodyGroup.add(exhaust);
+  const exhaustTip = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.075, 0.14, 10), brassMat);
+  exhaustTip.position.set(0.42, 2.09, -0.78);
+  bodyGroup.add(exhaustTip);
 
   // Wheels resting flush at y = 0.44 -> bottom at y = 0
   const wheelXs = wheelCount === 6 ? [1.28, -0.45, -1.42] : [1.22, -1.08];
   for (const wx of wheelXs) {
     for (const wz of [-0.8, 0.8]) {
-      const w = createWheel(0.44, 0.28);
+      const w = createWheel(maxAnisotropy, 0.44, 0.28);
       w.position.set(wx, 0.44, wz);
       root.add(w);
       wheels.push(w);
@@ -263,6 +346,7 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
   const bodyGroup = new THREE.Group();
   root.add(bodyGroup);
   const wheels: THREE.Object3D[] = [];
+  const paperBump = getPaperBumpTexture(maxAnisotropy);
 
   const rig: TruckRig = {
     id: vehicleId,
@@ -272,13 +356,15 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
   };
 
   if (vehicleId === 'molen') {
-    addBaseChassisAndCab(root, bodyGroup, wheels, '#F59E0B', '#FEF3C7', 6);
+    addBaseChassisAndCab(root, bodyGroup, wheels, '#E8951B', '#FAF0D1', maxAnisotropy, 6);
 
-    // Drum cradle support
+    // Drum cradle support (warm painted iron)
     const supportMat = new THREE.MeshStandardMaterial({
-      color: '#475569',
-      roughness: 0.65,
-      metalness: 0.35,
+      color: '#5B5048',
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.72,
+      metalness: 0.25,
     });
     const frontStand = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.9, 0.9), supportMat);
     frontStand.position.set(0.15, 1.15, 0);
@@ -308,23 +394,34 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     const drumGeo = new THREE.LatheGeometry(lathePoints, 24);
     drumGeo.rotateZ(Math.PI / 2);
 
-    const stripeTex = createMixerStripeTexture('#F59E0B', maxAnisotropy);
+    const stripeTex = createMixerStripeTexture('#E8951B', maxAnisotropy);
     const drumMat = new THREE.MeshStandardMaterial({
       map: stripeTex,
-      roughness: 0.36,
-      metalness: 0.12,
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.52,
+      metalness: 0.08,
     });
     const drumMesh = new THREE.Mesh(drumGeo, drumMat);
     drumMesh.castShadow = true;
     drumMesh.receiveShadow = true;
     drumGroup.add(drumMesh);
 
+    // Painted iron drum rim collar
+    const rimCollar = new THREE.Mesh(
+      new THREE.TorusGeometry(0.92, 0.045, 8, 22),
+      supportMat,
+    );
+    rimCollar.rotation.y = Math.PI / 2;
+    rimCollar.position.set(-0.08, 0, 0);
+    drumGroup.add(rimCollar);
+
     // Rear chute
     const chuteGroup = new THREE.Group();
     chuteGroup.position.set(-1.82, 1.48, 0);
     const chuteMesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.85, 0.14, 0.42),
-      new THREE.MeshStandardMaterial({ color: '#94A3B8', roughness: 0.35, metalness: 0.6 }),
+      new THREE.MeshStandardMaterial({ color: '#AFA292', roughness: 0.48, metalness: 0.42 }),
     );
     chuteMesh.position.set(-0.32, -0.2, 0);
     chuteMesh.rotation.z = 0.45;
@@ -335,22 +432,27 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     rig.drumMaterial = drumMat;
     rig.chuteGroup = chuteGroup;
   } else if (vehicleId === 'angkut') {
-    addBaseChassisAndCab(root, bodyGroup, wheels, '#2563EB', '#DBEAFE', 4);
+    addBaseChassisAndCab(root, bodyGroup, wheels, '#2F6CC0', '#E8F0FA', maxAnisotropy, 4);
 
-    // Hinged Cargo / Dump Bed
+    // Hinged Honey-Oak Planked Storybook Wooden Cargo Bed
     const bedGroup = new THREE.Group();
     bedGroup.position.set(-1.6, 0.85, 0); // pivot near rear
     bodyGroup.add(bedGroup);
 
+    const woodBedTex = createWoodPlankTexture('#C98A3E', maxAnisotropy);
     const bedMat = new THREE.MeshStandardMaterial({
-      color: '#F59E0B',
-      roughness: 0.46,
-      metalness: 0.12,
+      map: woodBedTex,
+      bumpMap: paperBump,
+      bumpScale: 0.028,
+      roughness: 0.72,
+      metalness: 0.04,
     });
     const bedTrimMat = new THREE.MeshStandardMaterial({
-      color: '#D97706',
-      roughness: 0.55,
-      metalness: 0.15,
+      color: '#7A4A24',
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.78,
+      metalness: 0.05,
     });
 
     // Floor
@@ -360,21 +462,27 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     floor.receiveShadow = true;
     bedGroup.add(floor);
 
-    // Side walls
+    // Planked side walls + vertical timber stakes
     for (const sz of [-0.76, 0.76]) {
       const side = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.68, 0.12), bedMat);
       side.position.set(1.05, 0.48, sz);
       side.castShadow = true;
       bedGroup.add(side);
+
+      for (const sx of [0.12, 1.05, 1.98]) {
+        const stake = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.78, 0.16), bedTrimMat);
+        stake.position.set(sx, 0.5, sz);
+        bedGroup.add(stake);
+      }
     }
     // Front bulkhead
-    const frontWall = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.82, 1.6), bedTrimMat);
+    const frontWall = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.84, 1.62), bedTrimMat);
     frontWall.position.set(2.08, 0.54, 0);
     frontWall.castShadow = true;
     bedGroup.add(frontWall);
 
     // Rear tailgate
-    const backWall = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 1.52), bedTrimMat);
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 1.52), bedMat);
     backWall.position.set(0.02, 0.44, 0);
     bedGroup.add(backWall);
 
@@ -385,25 +493,28 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     rig.bedGroup = bedGroup;
     rig.cargoSlot = cargoSlot;
   } else if (vehicleId === 'tangki') {
-    addBaseChassisAndCab(root, bodyGroup, wheels, '#0284C7', '#E0F2FE', 6);
+    addBaseChassisAndCab(root, bodyGroup, wheels, '#1D7FB4', '#E5F2FA', maxAnisotropy, 6);
 
-    // White & sky-blue cylindrical tanker body
-    const tankShellMat = new THREE.MeshStandardMaterial({
-      color: '#F8FAFC',
-      roughness: 0.28,
-      metalness: 0.25,
+    // Warm ivory-cream & cerulean painted storybook tanker body
+    const tankShellMat = makeGouacheMat('#FAF3E3', maxAnisotropy, {
+      roughness: 0.46,
+      metalness: 0.14,
     });
-    const capMat = new THREE.MeshStandardMaterial({
-      color: '#0369A1',
-      roughness: 0.35,
-      metalness: 0.35,
+    const capMat = makeGouacheMat('#1D6FA1', maxAnisotropy, {
+      roughness: 0.52,
+      metalness: 0.16,
+    });
+    const brassRingMat = new THREE.MeshStandardMaterial({
+      color: '#DFAF58',
+      roughness: 0.36,
+      metalness: 0.55,
     });
     const glassWindowMat = new THREE.MeshStandardMaterial({
-      color: '#E0F2FE',
-      roughness: 0.15,
-      metalness: 0.1,
+      color: '#DFF1FA',
+      roughness: 0.16,
+      metalness: 0.08,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.36,
       depthWrite: false,
     });
 
@@ -416,6 +527,14 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     tankBody.castShadow = true;
     bodyGroup.add(tankBody);
 
+    // Decorative painted brass/blue tanker bands
+    for (const bx of [-1.45, 0.08]) {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.79, 0.035, 8, 22), brassRingMat);
+      band.rotation.y = Math.PI / 2;
+      band.position.set(bx, 1.55, 0);
+      bodyGroup.add(band);
+    }
+
     // Rounded end caps
     for (const ex of [-1.78, 0.42]) {
       const cap = new THREE.Mesh(new THREE.SphereGeometry(0.77, 18, 14), capMat);
@@ -424,17 +543,17 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
       bodyGroup.add(cap);
     }
 
-    // Top hatch domes
+    // Top brass-rimmed hatch domes
     for (const hx of [-1.15, -0.25]) {
-      const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.18, 14), capMat);
+      const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.18, 14), brassRingMat);
       hatch.position.set(hx, 2.35, 0);
       bodyGroup.add(hatch);
     }
 
     // Big side water gauge window (on +Z side facing camera)
     const gaugeFrame = new THREE.Mesh(
-      new THREE.BoxGeometry(1.48, 0.92, 0.14),
-      new THREE.MeshStandardMaterial({ color: '#334155', roughness: 0.45, metalness: 0.4 }),
+      new THREE.BoxGeometry(1.5, 0.94, 0.14),
+      new THREE.MeshStandardMaterial({ color: '#4B4039', roughness: 0.56, metalness: 0.32 }),
     );
     gaugeFrame.position.set(-0.68, 1.55, 0.76);
     bodyGroup.add(gaugeFrame);
@@ -448,11 +567,11 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     const waterFillGeo = new THREE.BoxGeometry(1.28, 0.72, 0.12);
     waterFillGeo.translate(0, 0.36, 0); // pivot at bottom of gauge
     const waterFillMat = new THREE.MeshStandardMaterial({
-      color: '#38BDF8',
-      emissive: '#0284C7',
-      emissiveIntensity: 0.35,
-      roughness: 0.15,
-      metalness: 0.1,
+      color: '#46BBE8',
+      emissive: '#1484B8',
+      emissiveIntensity: 0.34,
+      roughness: 0.18,
+      metalness: 0.08,
     });
     const waterFillMesh = new THREE.Mesh(waterFillGeo, waterFillMat);
     waterFillMesh.position.set(-0.68, 1.19, 0.79);
@@ -461,22 +580,28 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
 
     rig.waterFillMesh = waterFillMesh;
   } else if (vehicleId === 'crane') {
-    addBaseChassisAndCab(root, bodyGroup, wheels, '#EAB308', '#1E293B', 6);
+    addBaseChassisAndCab(root, bodyGroup, wheels, '#DEA41A', '#3F352E', maxAnisotropy, 6);
 
     // Turret base
     const turretGroup = new THREE.Group();
     turretGroup.position.set(-0.72, 0.84, 0);
     bodyGroup.add(turretGroup);
 
-    const turretMat = new THREE.MeshStandardMaterial({
-      color: '#CA8A04',
-      roughness: 0.4,
-      metalness: 0.25,
+    const turretMat = makeGouacheMat('#C98D14', maxAnisotropy, {
+      roughness: 0.55,
+      metalness: 0.14,
     });
     const darkMetal = new THREE.MeshStandardMaterial({
-      color: '#334155',
-      roughness: 0.5,
-      metalness: 0.65,
+      color: '#48403A',
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.62,
+      metalness: 0.45,
+    });
+    const brassPulleyMat = new THREE.MeshStandardMaterial({
+      color: '#E2B657',
+      roughness: 0.36,
+      metalness: 0.55,
     });
 
     const baseCyl = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.68, 0.38, 16), darkMetal);
@@ -487,6 +612,14 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     craneHouse.position.set(-0.1, 0.72, 0);
     craneHouse.castShadow = true;
     turretGroup.add(craneHouse);
+
+    // Small operator cab window on turret side
+    const opWin = new THREE.Mesh(
+      new THREE.BoxGeometry(0.46, 0.36, 1.1),
+      new THREE.MeshStandardMaterial({ color: '#C7E5F5', roughness: 0.2 }),
+    );
+    opWin.position.set(-0.25, 0.82, 0);
+    turretGroup.add(opWin);
 
     // Boom arm extending upward and outward
     const boomGroup = new THREE.Group();
@@ -499,7 +632,7 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     boomMesh.castShadow = true;
     boomGroup.add(boomMesh);
 
-    const pulley = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.42, 14), darkMetal);
+    const pulley = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.44, 14), brassPulleyMat);
     pulley.rotation.x = Math.PI / 2;
     pulley.position.set(-2.55, 2.55, 0);
     boomGroup.add(pulley);
@@ -519,7 +652,7 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     hookGroup.add(hookBlock);
     const hookCurve = new THREE.Mesh(
       new THREE.TorusGeometry(0.14, 0.045, 8, 14, Math.PI * 1.3),
-      new THREE.MeshStandardMaterial({ color: '#F97316', roughness: 0.35, metalness: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: '#DF6528', roughness: 0.42, metalness: 0.42 }),
     );
     hookCurve.position.set(0, -0.2, 0);
     hookCurve.rotation.z = Math.PI * 0.85;
@@ -531,22 +664,27 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     rig.cableMesh = cableMesh;
     rig.hookGroup = hookGroup;
   } else if (vehicleId === 'pemadam') {
-    addBaseChassisAndCab(root, bodyGroup, wheels, '#DC2626', '#FFFFFF', 6);
+    addBaseChassisAndCab(root, bodyGroup, wheels, '#CC3329', '#FAF2DF', maxAnisotropy, 6);
 
-    const redBodyMat = new THREE.MeshStandardMaterial({
-      color: '#DC2626',
-      roughness: 0.36,
-      metalness: 0.12,
+    const redBodyMat = makeGouacheMat('#CC3329', maxAnisotropy, {
+      roughness: 0.54,
+      metalness: 0.06,
     });
     const shutterMat = new THREE.MeshStandardMaterial({
-      color: '#E2E8F0',
-      roughness: 0.32,
-      metalness: 0.65,
+      color: '#EAE2D2',
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.46,
+      metalness: 0.38,
     });
-    const ladderMat = new THREE.MeshStandardMaterial({
-      color: '#F1F5F9',
-      roughness: 0.25,
-      metalness: 0.72,
+    const woodLadderMat = new THREE.MeshStandardMaterial({
+      map: createWoodPlankTexture('#C78F45', maxAnisotropy),
+      roughness: 0.68,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: '#E5B958',
+      roughness: 0.32,
+      metalness: 0.62,
     });
 
     // Rear fire engine equipment box
@@ -556,84 +694,101 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     equipBox.receiveShadow = true;
     bodyGroup.add(equipBox);
 
-    // Equipment roller shutters on sides
+    // Cream stripe continuing across equipment box
+    const rearStripe = new THREE.Mesh(
+      new THREE.BoxGeometry(2.22, 0.16, 1.56),
+      makeGouacheMat('#FAF2DF', maxAnisotropy, { roughness: 0.6 }),
+    );
+    rearStripe.position.set(-0.68, 0.92, 0);
+    bodyGroup.add(rearStripe);
+
+    // Equipment roller shutters with brass handles on sides
     for (const sz of [-0.79, 0.79]) {
       const shutter = new THREE.Mesh(new THREE.BoxGeometry(1.48, 0.66, 0.06), shutterMat);
-      shutter.position.set(-0.68, 1.24, sz);
+      shutter.position.set(-0.68, 1.3, sz);
       bodyGroup.add(shutter);
+
+      const handle = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.06, 0.09), brassMat);
+      handle.position.set(-0.68, 1.08, sz);
+      bodyGroup.add(handle);
     }
 
-    // Flashing roof beacons (red & blue)
+    // Flashing roof beacons (red & blue) on brass bases
     const sirenLeftMat = new THREE.MeshStandardMaterial({
       color: '#EF4444',
       emissive: '#EF4444',
       emissiveIntensity: 0.25,
-      roughness: 0.2,
+      roughness: 0.25,
     });
     const sirenRightMat = new THREE.MeshStandardMaterial({
       color: '#3B82F6',
       emissive: '#3B82F6',
       emissiveIntensity: 0.25,
-      roughness: 0.2,
+      roughness: 0.25,
     });
+    const beaconBaseGeo = new THREE.CylinderGeometry(0.17, 0.19, 0.07, 12);
+    const baseL = new THREE.Mesh(beaconBaseGeo, brassMat);
+    baseL.position.set(1.25, 2.04, -0.35);
+    const baseR = new THREE.Mesh(beaconBaseGeo, brassMat);
+    baseR.position.set(1.25, 2.04, 0.35);
+    bodyGroup.add(baseL, baseR);
+
     const beaconL = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 0.22, 12), sirenLeftMat);
-    beaconL.position.set(1.25, 2.15, -0.35);
+    beaconL.position.set(1.25, 2.18, -0.35);
     bodyGroup.add(beaconL);
 
     const beaconR = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 0.22, 12), sirenRightMat);
-    beaconR.position.set(1.25, 2.15, 0.35);
+    beaconR.position.set(1.25, 2.18, 0.35);
     bodyGroup.add(beaconR);
 
-    // Roof ladder
-    const ladderRail1 = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.08, 0.08), ladderMat);
+    // Storybook honey-oak & brass roof ladder
+    const ladderRail1 = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.08, 0.08), woodLadderMat);
     ladderRail1.position.set(-0.65, 2.12, -0.26);
     bodyGroup.add(ladderRail1);
-    const ladderRail2 = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.08, 0.08), ladderMat);
+    const ladderRail2 = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.08, 0.08), woodLadderMat);
     ladderRail2.position.set(-0.65, 2.12, 0.26);
     bodyGroup.add(ladderRail2);
     for (let i = 0; i < 6; i++) {
-      const rung = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.5), ladderMat);
+      const rung = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.5), brassMat);
       rung.position.set(-1.55 + i * 0.36, 2.12, 0);
       bodyGroup.add(rung);
     }
 
-    // Aimable 3D water cannon nozzle mounted atop rear deck
+    // Aimable 3D brass-and-cream water cannon nozzle mounted atop rear deck
     const nozzleGroup = new THREE.Group();
     nozzleGroup.position.set(0.05, 2.28, 0);
-    const turret = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.22, 0.24, 12),
-      new THREE.MeshStandardMaterial({ color: '#FACC15', roughness: 0.3, metalness: 0.5 }),
-    );
+    const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.24, 12), brassMat);
     nozzleGroup.add(turret);
     const barrel = new THREE.Mesh(
       new THREE.CylinderGeometry(0.08, 0.11, 0.72, 12),
-      new THREE.MeshStandardMaterial({ color: '#E2E8F0', roughness: 0.25, metalness: 0.8 }),
+      shutterMat,
     );
     barrel.rotation.x = Math.PI / 2;
     barrel.position.set(0, 0.12, 0.32);
     nozzleGroup.add(barrel);
+    const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.085, 0.12, 12), brassMat);
+    tip.rotation.x = Math.PI / 2;
+    tip.position.set(0, 0.12, 0.68);
+    nozzleGroup.add(tip);
     bodyGroup.add(nozzleGroup);
 
     rig.sirenLeftMat = sirenLeftMat;
     rig.sirenRightMat = sirenRightMat;
     rig.nozzleGroup = nozzleGroup;
   } else if (vehicleId === 'sampah') {
-    addBaseChassisAndCab(root, bodyGroup, wheels, '#16A34A', '#FEF08A', 6);
+    addBaseChassisAndCab(root, bodyGroup, wheels, '#2B8E4C', '#FAF0C4', maxAnisotropy, 6);
 
-    const greenBodyMat = new THREE.MeshStandardMaterial({
-      color: '#22C55E',
-      roughness: 0.44,
-      metalness: 0.08,
+    const greenBodyMat = makeGouacheMat('#379F56', maxAnisotropy, {
+      roughness: 0.56,
+      metalness: 0.05,
     });
-    const whiteTrimMat = new THREE.MeshStandardMaterial({
-      color: '#F8FAFC',
-      roughness: 0.42,
-      metalness: 0.1,
+    const creamTrimMat = makeGouacheMat('#FAF3E1', maxAnisotropy, {
+      roughness: 0.58,
+      metalness: 0.04,
     });
-    const darkTrim = new THREE.MeshStandardMaterial({
-      color: '#15803D',
-      roughness: 0.5,
-      metalness: 0.15,
+    const darkTrim = makeGouacheMat('#22703C', maxAnisotropy, {
+      roughness: 0.62,
+      metalness: 0.06,
     });
 
     // Compactor box
@@ -643,10 +798,17 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     compactor.receiveShadow = true;
     bodyGroup.add(compactor);
 
-    // Clean white recycle stripe
-    const band = new THREE.Mesh(new THREE.BoxGeometry(1.94, 0.34, 1.6), whiteTrimMat);
+    // Clean warm-cream recycle stripe
+    const band = new THREE.Mesh(new THREE.BoxGeometry(1.94, 0.34, 1.6), creamTrimMat);
     band.position.set(-0.48, 1.45, 0);
     bodyGroup.add(band);
+
+    // Subtle vertical panel ribs along compactor
+    for (const rx of [-1.02, -0.48, 0.06]) {
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.28, 1.62), darkTrim);
+      rib.position.set(rx, 1.42, 0);
+      bodyGroup.add(rib);
+    }
 
     // Rear articulated hopper / compactor tail
     const hopperGroup = new THREE.Group();
@@ -671,54 +833,73 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
 
 export function buildCargoProp(type: CargoTypeId): THREE.Group {
   const g = new THREE.Group();
+  const paperBump = getPaperBumpTexture(4);
   if (type === 'apple') {
     const body = new THREE.Mesh(
       new THREE.SphereGeometry(0.24, 14, 12),
-      new THREE.MeshStandardMaterial({ color: '#EF4444', roughness: 0.32, metalness: 0.05 }),
+      makeGouacheMat('#DF443A', 4, { roughness: 0.42 }),
     );
     body.position.y = 0.24;
     body.castShadow = true;
     g.add(body);
     const stem = new THREE.Mesh(
       new THREE.CylinderGeometry(0.025, 0.03, 0.14, 6),
-      new THREE.MeshStandardMaterial({ color: '#78350F', roughness: 0.8 }),
+      new THREE.MeshStandardMaterial({ color: '#6E4222', roughness: 0.88 }),
     );
     stem.position.y = 0.48;
     g.add(stem);
     const leaf = new THREE.Mesh(
       new THREE.SphereGeometry(0.08, 8, 6),
-      new THREE.MeshStandardMaterial({ color: '#22C55E', roughness: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: '#5EA846', roughness: 0.65 }),
     );
     leaf.scale.set(1.5, 0.5, 0.8);
     leaf.position.set(0.08, 0.5, 0);
     g.add(leaf);
   } else if (type === 'wood') {
-    const log = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.18, 0.58, 12),
-      new THREE.MeshStandardMaterial({ color: '#B45309', roughness: 0.78, metalness: 0.02 }),
-    );
+    const logMat = new THREE.MeshStandardMaterial({
+      map: createWoodPlankTexture('#A96832', 4),
+      bumpMap: paperBump,
+      bumpScale: 0.03,
+      roughness: 0.84,
+    });
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.58, 12), logMat);
     log.rotation.z = Math.PI / 2;
     log.position.y = 0.18;
     log.castShadow = true;
     g.add(log);
+    const endMat = new THREE.MeshStandardMaterial({ color: '#E8CFA2', roughness: 0.85 });
+    for (const ex of [-0.295, 0.295]) {
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.02, 12), endMat);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.set(ex, 0.18, 0);
+      g.add(cap);
+    }
   } else if (type === 'box') {
     const cube = new THREE.Mesh(
       new THREE.BoxGeometry(0.42, 0.42, 0.42),
-      new THREE.MeshStandardMaterial({ color: '#8B5CF6', roughness: 0.45, metalness: 0.05 }),
+      makeGouacheMat('#865DC9', 4, { roughness: 0.58 }),
     );
     cube.position.y = 0.21;
     cube.castShadow = true;
     g.add(cube);
-    const ribbon = new THREE.Mesh(
-      new THREE.BoxGeometry(0.44, 0.1, 0.44),
-      new THREE.MeshStandardMaterial({ color: '#FACC15', roughness: 0.35 }),
-    );
-    ribbon.position.y = 0.21;
-    g.add(ribbon);
+    const ribbonMat = makeGouacheMat('#F3C443', 4, { roughness: 0.48 });
+    const ribbonH = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.09, 0.44), ribbonMat);
+    ribbonH.position.y = 0.21;
+    const ribbonV = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.44, 0.44), ribbonMat);
+    ribbonV.position.y = 0.21;
+    const bow = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), ribbonMat);
+    bow.scale.set(1.5, 0.65, 1.0);
+    bow.position.y = 0.45;
+    g.add(ribbonH, ribbonV, bow);
   } else {
     const brick = new THREE.Mesh(
       new THREE.BoxGeometry(0.52, 0.24, 0.3),
-      new THREE.MeshStandardMaterial({ color: '#EA580C', roughness: 0.82, metalness: 0.02 }),
+      new THREE.MeshStandardMaterial({
+        map: createBrickTexture('#CC5C34', 4),
+        bumpMap: paperBump,
+        bumpScale: 0.03,
+        roughness: 0.88,
+      }),
     );
     brick.position.y = 0.12;
     brick.castShadow = true;
@@ -729,26 +910,25 @@ export function buildCargoProp(type: CargoTypeId): THREE.Group {
 
 export function buildWasteProp(kind: WasteKind): THREE.Group {
   const g = new THREE.Group();
+  const paperBump = getPaperBumpTexture(4);
   if (kind === 'banana') {
     const arc = new THREE.Mesh(
       new THREE.TorusGeometry(0.28, 0.09, 8, 14, Math.PI * 0.85),
-      new THREE.MeshStandardMaterial({ color: '#FACC15', roughness: 0.5 }),
+      makeGouacheMat('#F2C53D', 4, { roughness: 0.62 }),
     );
     arc.position.y = 0.28;
     arc.rotation.z = 0.4;
     arc.castShadow = true;
     g.add(arc);
   } else if (kind === 'apple_core') {
-    const top = new THREE.Mesh(
-      new THREE.SphereGeometry(0.18, 10, 8),
-      new THREE.MeshStandardMaterial({ color: '#EF4444', roughness: 0.4 }),
-    );
+    const redMat = makeGouacheMat('#DC453A', 4, { roughness: 0.5 });
+    const top = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), redMat);
     top.scale.set(1, 0.55, 1);
     top.position.y = 0.42;
     g.add(top);
     const mid = new THREE.Mesh(
       new THREE.CylinderGeometry(0.08, 0.08, 0.26, 8),
-      new THREE.MeshStandardMaterial({ color: '#FEF3C7', roughness: 0.7 }),
+      new THREE.MeshStandardMaterial({ color: '#FBF1D4', roughness: 0.78 }),
     );
     mid.position.y = 0.25;
     g.add(mid);
@@ -758,7 +938,7 @@ export function buildWasteProp(kind: WasteKind): THREE.Group {
   } else if (kind === 'leaf') {
     const leaf = new THREE.Mesh(
       new THREE.SphereGeometry(0.28, 10, 8),
-      new THREE.MeshStandardMaterial({ color: '#22C55E', roughness: 0.6 }),
+      makeGouacheMat('#6DA848', 4, { roughness: 0.74 }),
     );
     leaf.scale.set(1.3, 0.22, 0.8);
     leaf.position.y = 0.14;
@@ -766,11 +946,11 @@ export function buildWasteProp(kind: WasteKind): THREE.Group {
     g.add(leaf);
   } else if (kind === 'bottle') {
     const mat = new THREE.MeshStandardMaterial({
-      color: '#38BDF8',
-      roughness: 0.18,
-      metalness: 0.1,
+      color: '#5EC2E4',
+      roughness: 0.24,
+      metalness: 0.08,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.84,
     });
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.15, 0.46, 12), mat);
     body.position.y = 0.23;
@@ -778,28 +958,39 @@ export function buildWasteProp(kind: WasteKind): THREE.Group {
     g.add(body);
     const cap = new THREE.Mesh(
       new THREE.CylinderGeometry(0.08, 0.08, 0.12, 10),
-      new THREE.MeshStandardMaterial({ color: '#2563EB', roughness: 0.4 }),
+      makeGouacheMat('#2D6CC0', 4, { roughness: 0.5 }),
     );
     cap.position.y = 0.52;
     g.add(cap);
   } else if (kind === 'can') {
     const can = new THREE.Mesh(
       new THREE.CylinderGeometry(0.16, 0.16, 0.42, 14),
-      new THREE.MeshStandardMaterial({ color: '#CBD5E1', roughness: 0.22, metalness: 0.82 }),
+      new THREE.MeshStandardMaterial({
+        color: '#DDD6C8',
+        bumpMap: paperBump,
+        bumpScale: 0.015,
+        roughness: 0.36,
+        metalness: 0.62,
+      }),
     );
     can.position.y = 0.21;
     can.castShadow = true;
     g.add(can);
     const label = new THREE.Mesh(
       new THREE.CylinderGeometry(0.165, 0.165, 0.2, 14),
-      new THREE.MeshStandardMaterial({ color: '#3B82F6', roughness: 0.45 }),
+      makeGouacheMat('#3E82C6', 4, { roughness: 0.6 }),
     );
     label.position.y = 0.21;
     g.add(label);
   } else {
     const box = new THREE.Mesh(
       new THREE.BoxGeometry(0.46, 0.36, 0.38),
-      new THREE.MeshStandardMaterial({ color: '#D97706', roughness: 0.85, metalness: 0.02 }),
+      new THREE.MeshStandardMaterial({
+        map: createWoodPlankTexture('#C68C48', 4),
+        bumpMap: paperBump,
+        bumpScale: 0.025,
+        roughness: 0.88,
+      }),
     );
     box.position.y = 0.18;
     box.castShadow = true;

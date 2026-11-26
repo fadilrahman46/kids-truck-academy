@@ -4,6 +4,7 @@ import {
   CARGO_OPTIONS,
   LETTERS_PRESCHOOL,
   LETTERS_TODDLER,
+  MOLEN_BLUEPRINTS,
   NUMBER_WORDS,
   PRIMARY_COLORS,
   WASTE_CATALOG,
@@ -13,13 +14,24 @@ import {
   type ColorOption,
   type LetterEntry,
   type MissionSnapshot,
+  type MolenBlueprintId,
   type PipeTileState,
   type VehicleId,
   type WasteCategory,
   type WasteItemDef,
 } from '../types/game';
 import { soundEngine } from '../audio/soundEngine';
-import { createMixerStripeTexture, createSignTexture } from './textures';
+import {
+  createBrickTexture,
+  createCobblestoneTexture,
+  createCottageWallTexture,
+  createGouachePaintTexture,
+  createMixerStripeTexture,
+  createRoofShingleTexture,
+  createSignTexture,
+  createWoodPlankTexture,
+  getPaperBumpTexture,
+} from './textures';
 import { buildCargoProp, buildWasteProp, type TruckRig } from './trucks';
 
 export interface MissionCallbacks {
@@ -36,24 +48,211 @@ export interface ActiveMissionController {
   update: (dt: number, elapsed: number) => void;
   handleRaycastHit: (hitObj: THREE.Object3D) => void;
   handleAction: (action: string, payload?: unknown) => void;
+  supportsDragSpray?: () => boolean;
+  handleDragSpray?: (worldPoint: THREE.Vector3, hitObj?: THREE.Object3D | null) => void;
+  stopDragSpray?: () => void;
   dispose: () => void;
 }
 
 // Helper for pipe port directions: 0=Top(-Z), 1=Right(+X), 2=Bottom(+Z), 3=Left(-X)
-function getPipePorts(type: 'straight' | 'elbow', rotation: number): number[] {
+export function getPipePorts(type: 'straight' | 'elbow', rotation: number): number[] {
   const base = type === 'straight' ? [1, 3] : [0, 1];
   return base.map((d) => (d + (rotation % 4)) % 4);
 }
 
+export interface PipeTemplateTile {
+  row: number;
+  col: number;
+  type: 'straight' | 'elbow';
+  /** Solved rotation (null if decoy tile) */
+  solvedRot: number | null;
+}
+
+/**
+ * 3 distinct solvable 2×3 pipe path templates for Prasekolah (4–6) mode:
+ *  - Template 0 (Middle Z-step): (0,0) -> (0,1) -> (1,1) -> (1,2)
+ *  - Template 1 (Early L-drop):  (0,0) -> (1,0) -> (1,1) -> (1,2)
+ *  - Template 2 (Far-right drop): (0,0) -> (0,1) -> (0,2) -> (1,2)
+ */
+export const PRESCHOOL_PIPE_TEMPLATES: PipeTemplateTile[][] = [
+  [
+    { row: 0, col: 0, type: 'straight', solvedRot: 0 },
+    { row: 0, col: 1, type: 'elbow', solvedRot: 2 },
+    { row: 0, col: 2, type: 'elbow', solvedRot: null },
+    { row: 1, col: 0, type: 'elbow', solvedRot: null },
+    { row: 1, col: 1, type: 'elbow', solvedRot: 0 },
+    { row: 1, col: 2, type: 'straight', solvedRot: 0 },
+  ],
+  [
+    { row: 0, col: 0, type: 'elbow', solvedRot: 2 },
+    { row: 0, col: 1, type: 'straight', solvedRot: null },
+    { row: 0, col: 2, type: 'elbow', solvedRot: null },
+    { row: 1, col: 0, type: 'elbow', solvedRot: 0 },
+    { row: 1, col: 1, type: 'straight', solvedRot: 0 },
+    { row: 1, col: 2, type: 'straight', solvedRot: 0 },
+  ],
+  [
+    { row: 0, col: 0, type: 'straight', solvedRot: 0 },
+    { row: 0, col: 1, type: 'straight', solvedRot: 0 },
+    { row: 0, col: 2, type: 'elbow', solvedRot: 2 },
+    { row: 1, col: 0, type: 'elbow', solvedRot: null },
+    { row: 1, col: 1, type: 'straight', solvedRot: null },
+    { row: 1, col: 2, type: 'elbow', solvedRot: 0 },
+  ],
+];
+
+export function checkPipePathSolved(
+  tiles: { row: number; col: number; type: 'straight' | 'elbow'; rotation: number }[],
+  rows: number,
+  cols: number,
+): boolean {
+  const outRow = rows === 1 ? 0 : 1;
+  const visited = new Set<string>();
+  const getTile = (r: number, c: number) => tiles.find((p) => p.row === r && p.col === c);
+  const startTile = getTile(0, 0);
+  if (!startTile || !getPipePorts(startTile.type, startTile.rotation).includes(3)) return false;
+
+  const queue = [startTile];
+  visited.add('0,0');
+  const dirs = [
+    { d: 0, dr: -1, dc: 0, opp: 2 },
+    { d: 1, dr: 0, dc: 1, opp: 3 },
+    { d: 2, dr: 1, dc: 0, opp: 0 },
+    { d: 3, dr: 0, dc: -1, opp: 1 },
+  ];
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    const ports = getPipePorts(curr.type, curr.rotation);
+    if (curr.row === outRow && curr.col === cols - 1 && ports.includes(1)) {
+      return true;
+    }
+    for (const dir of dirs) {
+      if (!ports.includes(dir.d)) continue;
+      const nxt = getTile(curr.row + dir.dr, curr.col + dir.dc);
+      const key = `${curr.row + dir.dr},${curr.col + dir.dc}`;
+      if (!nxt || visited.has(key)) continue;
+      if (getPipePorts(nxt.type, nxt.rotation).includes(dir.opp)) {
+        visited.add(key);
+        queue.push(nxt);
+      }
+    }
+  }
+  return false;
+}
+
+export function generateRandomizedPipeSpecs(
+  rows: number,
+  forcedTemplateId?: number,
+): {
+  templateId: number;
+  specs: { row: number; col: number; type: 'straight' | 'elbow'; startRot: number; solvedRot: number | null }[];
+} {
+  if (rows === 1) {
+    const base: PipeTemplateTile[] = [
+      { row: 0, col: 0, type: 'straight', solvedRot: 0 },
+      { row: 0, col: 1, type: 'straight', solvedRot: 0 },
+      { row: 0, col: 2, type: 'straight', solvedRot: 0 },
+    ];
+    // Guarantee at least 2 of 3 straight tiles start misaligned (rot 1 or 3)
+    const specs = base.map((t) => ({
+      ...t,
+      startRot: Math.floor(Math.random() * 4),
+    }));
+    const countMisaligned = () => specs.filter((s) => s.startRot % 2 !== 0).length;
+    while (countMisaligned() < 2) {
+      const idx = Math.floor(Math.random() * specs.length);
+      specs[idx].startRot = Math.random() < 0.5 ? 1 : 3;
+    }
+    return { templateId: 0, specs };
+  }
+
+  const templateId =
+    typeof forcedTemplateId === 'number'
+      ? ((forcedTemplateId % PRESCHOOL_PIPE_TEMPLATES.length) + PRESCHOOL_PIPE_TEMPLATES.length) %
+        PRESCHOOL_PIPE_TEMPLATES.length
+      : Math.floor(Math.random() * PRESCHOOL_PIPE_TEMPLATES.length);
+
+  const template = PRESCHOOL_PIPE_TEMPLATES[templateId];
+  const specs = template.map((t) => ({
+    ...t,
+    startRot: Math.floor(Math.random() * 4),
+  }));
+
+  const isMisaligned = (s: { type: 'straight' | 'elbow'; startRot: number; solvedRot: number | null }) => {
+    if (s.solvedRot === null) return false;
+    return s.type === 'straight' ? s.startRot % 2 !== s.solvedRot % 2 : s.startRot !== s.solvedRot;
+  };
+
+  const pathIndices = specs
+    .map((s, i) => (s.solvedRot !== null ? i : -1))
+    .filter((i) => i >= 0);
+
+  // Guarantee at least 2 solution-path tiles need rotating AND puzzle is not auto-solved
+  let guard = 0;
+  while (
+    (specs.filter(isMisaligned).length < 2 ||
+      checkPipePathSolved(
+        specs.map((s) => ({ row: s.row, col: s.col, type: s.type, rotation: s.startRot })),
+        2,
+        3,
+      )) &&
+    guard < 24
+  ) {
+    const pickIdx = pathIndices[Math.floor(Math.random() * pathIndices.length)];
+    const tile = specs[pickIdx];
+    const offset = tile.type === 'straight' ? 1 : 1 + Math.floor(Math.random() * 3);
+    tile.startRot = ((tile.solvedRot ?? 0) + offset) % 4;
+    guard += 1;
+  }
+
+  return { templateId, specs };
+}
+
+interface MolenBlockSpec {
+  pos: [number, number, number];
+  size: [number, number, number];
+  shape?: 'box' | 'cone';
+  shadeOffset?: number;
+}
+
+const MOLEN_BLUEPRINT_BLOCKS: Record<MolenBlueprintId, MolenBlockSpec[]> = {
+  house: [
+    { pos: [-0.85, 0.45, 0], size: [1.1, 0.9, 1.4] },
+    { pos: [0.85, 0.45, 0], size: [1.1, 0.9, 1.4] },
+    { pos: [0, 1.35, 0], size: [2.8, 0.9, 1.4] },
+    { pos: [0, 2.35, 0], size: [1.75, 1.25, 4], shape: 'cone', shadeOffset: -0.08 },
+  ],
+  tower: [
+    { pos: [0, 0.45, 0], size: [2.15, 0.9, 1.7] },
+    { pos: [0, 1.32, 0], size: [1.68, 0.86, 1.42] },
+    { pos: [0, 2.16, 0], size: [1.28, 0.84, 1.14] },
+    { pos: [0, 3.12, 0], size: [1.15, 1.18, 4], shape: 'cone', shadeOffset: -0.1 },
+  ],
+  bridge: [
+    { pos: [-1.25, 0.55, 0], size: [0.95, 1.1, 1.55] },
+    { pos: [1.25, 0.55, 0], size: [0.95, 1.1, 1.55] },
+    { pos: [0, 1.28, 0], size: [3.7, 0.36, 1.65] },
+    { pos: [0, 1.72, -0.68], size: [3.2, 0.32, 0.22], shadeOffset: -0.08 },
+    { pos: [0, 1.72, 0.68], size: [3.2, 0.32, 0.22], shadeOffset: -0.08 },
+  ],
+};
+
+let molenBlueprintCursor = 0;
+
 function buildPipeMesh(
   type: 'straight' | 'elbow',
   index: number,
+  maxAnisotropy: number,
 ): { group: THREE.Group; pipeMat: THREE.MeshStandardMaterial; baseMat: THREE.MeshStandardMaterial } {
   const group = new THREE.Group();
+  const paperBump = getPaperBumpTexture(maxAnisotropy);
   const baseMat = new THREE.MeshStandardMaterial({
-    color: '#E2E8F0',
-    roughness: 0.7,
-    metalness: 0.05,
+    map: createCobblestoneTexture(maxAnisotropy, 1, 1),
+    color: '#FAF1DF',
+    bumpMap: paperBump,
+    bumpScale: 0.025,
+    roughness: 0.86,
+    metalness: 0.02,
   });
   const base = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.16, 1.42), baseMat);
   base.position.y = 0.08;
@@ -61,15 +260,17 @@ function buildPipeMesh(
   group.add(base);
 
   const pipeMat = new THREE.MeshStandardMaterial({
-    color: '#94A3B8',
-    roughness: 0.35,
-    metalness: 0.45,
+    color: '#9BA5AF',
+    bumpMap: paperBump,
+    bumpScale: 0.015,
+    roughness: 0.46,
+    metalness: 0.36,
   });
 
   const flangeMat = new THREE.MeshStandardMaterial({
-    color: '#475569',
-    roughness: 0.4,
-    metalness: 0.6,
+    color: '#5C4F46',
+    roughness: 0.5,
+    metalness: 0.48,
   });
 
   if (type === 'straight') {
@@ -155,6 +356,43 @@ export function createMissionController(
     timeouts.push(id);
   };
 
+  // P1-3: Gentle idle visual + bilingual voice hint tracker (active in Balita 2–3 mode)
+  const IDLE_HINT_SECONDS = 8.0;
+  let idleSeconds = 0;
+  let activeHintKey: string | null = null;
+  const resetIdle = (onClear?: () => void) => {
+    const hadHint = activeHintKey !== null;
+    idleSeconds = 0;
+    activeHintKey = null;
+    if (hadHint && onClear) {
+      onClear();
+    }
+  };
+  const tickIdle = (
+    dt: number,
+    isInteractive: boolean,
+    computeHint: () => { key: string; sayId: string; sayEn: string } | null,
+    onHintChange: () => void,
+  ) => {
+    if (ageMode !== 'toddler' || !isInteractive) {
+      if (activeHintKey !== null) {
+        activeHintKey = null;
+        onHintChange();
+      }
+      idleSeconds = 0;
+      return;
+    }
+    idleSeconds += dt;
+    if (idleSeconds >= IDLE_HINT_SECONDS && activeHintKey === null) {
+      const suggestion = computeHint();
+      if (suggestion) {
+        activeHintKey = suggestion.key;
+        soundEngine.speakBilingual(suggestion.sayId, suggestion.sayEn);
+        onHintChange();
+      }
+    }
+  };
+
   // Reset truck transforms cleanly for mission boulevard (z = 3.2)
   truck.root.position.set(0, 0, 3.2);
   truck.root.rotation.set(0, 0, 0);
@@ -183,10 +421,16 @@ export function createMissionController(
     truck.root.position.set(2.2, 0, 3.2);
     truck.root.rotation.y = 0; // chute faces left (-X) toward building pad
 
-    // Building pad on the left
+    // Sandstone cobblestone building pad on the left
+    const paperBump = getPaperBumpTexture(maxAnisotropy);
     const pad = new THREE.Mesh(
       new THREE.BoxGeometry(4.2, 0.16, 3.2),
-      new THREE.MeshStandardMaterial({ color: '#CBD5E1', roughness: 0.85 }),
+      new THREE.MeshStandardMaterial({
+        map: createCobblestoneTexture(maxAnisotropy, 2, 2),
+        bumpMap: paperBump,
+        bumpScale: 0.025,
+        roughness: 0.88,
+      }),
     );
     pad.position.set(-2.6, 0.08, 3.2);
     pad.receiveShadow = true;
@@ -194,8 +438,8 @@ export function createMissionController(
 
     // Paint stream mesh from chute
     const streamMat = new THREE.MeshStandardMaterial({
-      color: '#F59E0B',
-      roughness: 0.3,
+      color: '#E8951B',
+      roughness: 0.42,
     });
     const streamMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 1.5, 12), streamMat);
     streamMesh.position.set(-0.2, 0.9, 3.2);
@@ -203,36 +447,57 @@ export function createMissionController(
     streamMesh.visible = false;
     group.add(streamMesh);
 
-    // 3D Storybook house/tower blocks waiting to rise
+    // 3D Storybook structure blocks waiting to rise (P2-2: Rumah / Menara / Jembatan)
     const buildGroup = new THREE.Group();
     buildGroup.position.set(-2.6, 0.16, 3.2);
     group.add(buildGroup);
 
-    const blockDefs = [
-      { pos: [-0.85, 0.45, 0], size: [1.1, 0.9, 1.4] },
-      { pos: [0.85, 0.45, 0], size: [1.1, 0.9, 1.4] },
-      { pos: [0, 1.35, 0], size: [2.8, 0.9, 1.4] },
-      { pos: [0, 2.3, 0], size: [2.2, 1.0, 1.5], isRoof: true },
-    ];
-    const builtBlocks: { mesh: THREE.Mesh; targetY: number }[] = [];
-    const blockMats: THREE.MeshStandardMaterial[] = [];
+    let blueprintId: MolenBlueprintId =
+      MOLEN_BLUEPRINTS[molenBlueprintCursor % MOLEN_BLUEPRINTS.length].id;
+    molenBlueprintCursor += 1;
 
-    blockDefs.forEach((b) => {
-      const mat = new THREE.MeshStandardMaterial({ color: '#F59E0B', roughness: 0.45 });
-      blockMats.push(mat);
-      const geo = b.isRoof
-        ? new THREE.ConeGeometry(1.75, 1.25, 4)
-        : new THREE.BoxGeometry(b.size[0], b.size[1], b.size[2]);
-      const mesh = new THREE.Mesh(geo, mat);
-      if (b.isRoof) mesh.rotation.y = Math.PI / 4;
-      mesh.position.set(b.pos[0], b.pos[1], b.pos[2]);
-      mesh.scale.set(0.01, 0.01, 0.01);
-      mesh.visible = false;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      buildGroup.add(mesh);
-      builtBlocks.push({ mesh, targetY: b.pos[1] });
-    });
+    const builtBlocks: { mesh: THREE.Mesh; targetY: number; shadeOffset: number }[] = [];
+    const blockMats: THREE.MeshStandardMaterial[] = [];
+    const neutralBrickTex = createBrickTexture('#EBE4D8', maxAnisotropy);
+    const neutralGouacheTex = createGouachePaintTexture('#F4EFE6', maxAnisotropy);
+
+    const rebuildStructureMeshes = (bp: MolenBlueprintId) => {
+      while (buildGroup.children.length > 0) {
+        const child = buildGroup.children[0] as THREE.Mesh;
+        buildGroup.remove(child);
+        child.geometry?.dispose();
+        if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+        else (child.material as THREE.Material)?.dispose();
+      }
+      builtBlocks.length = 0;
+      blockMats.length = 0;
+
+      const specs = MOLEN_BLUEPRINT_BLOCKS[bp];
+      specs.forEach((b) => {
+        const mat = new THREE.MeshStandardMaterial({
+          map: b.shape === 'cone' ? neutralGouacheTex : neutralBrickTex,
+          color: '#F59E0B',
+          bumpMap: paperBump,
+          bumpScale: 0.025,
+          roughness: 0.65,
+        });
+        blockMats.push(mat);
+        const geo =
+          b.shape === 'cone'
+            ? new THREE.ConeGeometry(b.size[0], b.size[1], b.size[2])
+            : new THREE.BoxGeometry(b.size[0], b.size[1], b.size[2]);
+        const mesh = new THREE.Mesh(geo, mat);
+        if (b.shape === 'cone') mesh.rotation.y = Math.PI / 4;
+        mesh.position.set(b.pos[0], b.pos[1], b.pos[2]);
+        mesh.scale.set(0.01, 0.01, 0.01);
+        mesh.visible = false;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        buildGroup.add(mesh);
+        builtBlocks.push({ mesh, targetY: b.pos[1], shadeOffset: b.shadeOffset ?? 0 });
+      });
+    };
+    rebuildStructureMeshes(blueprintId);
 
     const maxPicks = ageMode === 'toddler' ? 1 : 2;
     let selectedColors: ColorOption['id'][] = [];
@@ -241,15 +506,18 @@ export function createMissionController(
     let spinTimer = 0;
     let buildProgress = 0;
 
+    const getBlueprintMeta = () => MOLEN_BLUEPRINTS.find((b) => b.id === blueprintId)!;
+
     const emit = () => {
+      const bp = getBlueprintMeta();
       let promptId =
         ageMode === 'toddler'
-          ? 'Pilih 1 warna cat untuk dimasukkan ke Truk Molen!'
-          : 'Pilih 2 warna untuk dicampur di dalam Truk Molen!';
+          ? `Pilih 1 warna cat untuk membangun ${bp.nameId}!`
+          : `Pilih 2 warna untuk dicampur dan membangun ${bp.nameId}!`;
       let promptEn =
         ageMode === 'toddler'
-          ? 'Pick 1 paint color for the Cement Mixer!'
-          : 'Pick 2 colors to mix inside the Cement Mixer!';
+          ? `Pick 1 paint color to build the ${bp.nameEn}!`
+          : `Pick 2 colors to mix and build the ${bp.nameEn}!`;
 
       if (phase === 'PICK' && selectedColors.length === maxPicks) {
         promptId = 'Tekan tombol Putar Molen agar adonan tercampur!';
@@ -258,11 +526,11 @@ export function createMissionController(
         promptId = 'Molen sedang berputar mencampur warna...';
         promptEn = 'Spinning and mixing the colors...';
       } else if (phase === 'BUILDING' && mixedColor) {
-        promptId = `Wah! Warna ${mixedColor.nameId} membangun rumah!`;
-        promptEn = `Awesome! ${mixedColor.nameEn} is building the house!`;
+        promptId = `Wah! Warna ${mixedColor.nameId} membangun ${bp.nameId.toLowerCase()}!`;
+        promptEn = `Awesome! ${mixedColor.nameEn} is building the ${bp.nameEn.toLowerCase()}!`;
       } else if (phase === 'DONE' && mixedColor) {
-        promptId = `Rumah warna ${mixedColor.nameId} selesai!`;
-        promptEn = `${mixedColor.nameEn} house is complete!`;
+        promptId = `${bp.nameId} warna ${mixedColor.nameId} selesai!`;
+        promptEn = `${mixedColor.nameEn} ${bp.nameEn.toLowerCase()} is complete!`;
       }
 
       callbacks.onSnapshot({
@@ -272,17 +540,22 @@ export function createMissionController(
         promptEn,
         selectedColors: [...selectedColors],
         mixedColor,
+        molenBlueprint: blueprintId,
         structureProgress: buildProgress,
+        hintKey: activeHintKey,
         completed: phase === 'DONE',
       });
     };
 
     emit();
+    const initialBp = getBlueprintMeta();
     soundEngine.speakBilingual(
       ageMode === 'toddler'
-        ? 'Truk Molen! Ayo pilih satu warna!'
-        : 'Truk Molen! Ayo pilih dua warna untuk dicampur!',
-      ageMode === 'toddler' ? 'Cement Mixer! Pick a color!' : 'Cement Mixer! Mix two colors!',
+        ? `Truk Molen! Ayo pilih satu warna untuk membangun ${initialBp.nameId}!`
+        : `Truk Molen! Ayo pilih dua warna untuk membangun ${initialBp.nameId}!`,
+      ageMode === 'toddler'
+        ? `Cement Mixer! Pick a color to build a ${initialBp.nameEn}!`
+        : `Cement Mixer! Mix two colors to build a ${initialBp.nameEn}!`,
     );
 
     return {
@@ -303,7 +576,8 @@ export function createMissionController(
               streamMat.color.set(mixedColor.hex);
               blockMats.forEach((m, i) => {
                 m.color.set(mixedColor!.hex);
-                if (i === blockMats.length - 1) m.color.offsetHSL(0, 0, -0.08);
+                const shade = builtBlocks[i]?.shadeOffset ?? 0;
+                if (shade !== 0) m.color.offsetHSL(0, 0, shade);
               });
               if (truck.drumMaterial) {
                 const oldMap = truck.drumMaterial.map;
@@ -322,8 +596,9 @@ export function createMissionController(
         } else if (phase === 'BUILDING') {
           if (truck.drumGroup) truck.drumGroup.rotation.x += dt * 4.5;
           buildProgress = Math.min(1, buildProgress + dt * 0.45);
+          const stepSpan = 0.72 / Math.max(1, builtBlocks.length);
           builtBlocks.forEach((b, idx) => {
-            const threshold = idx * 0.22;
+            const threshold = idx * stepSpan;
             if (buildProgress > threshold) {
               b.mesh.visible = true;
               const localT = Math.min(1, (buildProgress - threshold) / 0.28);
@@ -335,16 +610,50 @@ export function createMissionController(
             phase = 'DONE';
             streamMesh.visible = false;
             truck.bodyGroup.position.y = 0;
+            const bp = getBlueprintMeta();
+            if (mixedColor) {
+              soundEngine.speakBilingual(
+                `${bp.nameId} warna ${mixedColor.nameId} selesai!`,
+                `${mixedColor.nameEn} ${bp.nameEn} is complete!`,
+              );
+            }
             emit();
             later(() => callbacks.onCelebrate('molen'), 600);
           }
         } else {
           if (truck.drumGroup) truck.drumGroup.rotation.x += dt * 0.6;
         }
+        tickIdle(
+          dt,
+          phase === 'PICK',
+          () =>
+            selectedColors.length < maxPicks
+              ? {
+                  key: 'color:red',
+                  sayId: 'Ayo ketuk warna Merah!',
+                  sayEn: 'Try tapping Red!',
+                }
+              : {
+                  key: 'spin',
+                  sayId: 'Sekarang tekan tombol Putar Molen!',
+                  sayEn: 'Now tap Spin Mixer!',
+                },
+          emit,
+        );
       },
       handleRaycastHit: () => {},
       handleAction: (action, payload) => {
-        if (action === 'PICK_COLOR' && phase === 'PICK') {
+        resetIdle(emit);
+        if (action === 'SELECT_BLUEPRINT' && phase === 'PICK') {
+          const nextBp = payload as MolenBlueprintId;
+          const meta = MOLEN_BLUEPRINTS.find((b) => b.id === nextBp);
+          if (!meta || nextBp === blueprintId) return;
+          blueprintId = nextBp;
+          rebuildStructureMeshes(blueprintId);
+          soundEngine.playPop();
+          soundEngine.speakBilingual(meta.nameId, meta.nameEn);
+          emit();
+        } else if (action === 'PICK_COLOR' && phase === 'PICK') {
           const colorId = payload as ColorOption['id'];
           const opt = PRIMARY_COLORS.find((c) => c.id === colorId);
           if (!opt) return;
@@ -393,23 +702,45 @@ export function createMissionController(
     truck.root.position.set(-1.5, 0, 3.2);
     truck.root.rotation.y = 0;
 
-    // Delivery barn archway down the right side of the road
+    // Storybook timber & terracotta delivery barn archway down the right side of the road
     const barn = new THREE.Group();
     barn.position.set(11.5, 0, 3.2);
-    const pillarMat = new THREE.MeshStandardMaterial({ color: '#EF4444', roughness: 0.55 });
-    const roofMat = new THREE.MeshStandardMaterial({ color: '#FACC15', roughness: 0.45 });
-    const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.6, 3.2, 0.6), pillarMat);
+    const paperBump = getPaperBumpTexture(maxAnisotropy);
+    const pillarMat = new THREE.MeshStandardMaterial({
+      map: createWoodPlankTexture('#C64938', maxAnisotropy),
+      bumpMap: paperBump,
+      bumpScale: 0.025,
+      roughness: 0.78,
+    });
+    const beamMat = new THREE.MeshStandardMaterial({
+      map: createWoodPlankTexture('#C4873D', maxAnisotropy),
+      bumpMap: paperBump,
+      bumpScale: 0.025,
+      roughness: 0.76,
+    });
+    const roofCapMat = new THREE.MeshStandardMaterial({
+      map: createRoofShingleTexture('terracotta', maxAnisotropy),
+      bumpMap: paperBump,
+      bumpScale: 0.035,
+      roughness: 0.82,
+    });
+    const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.62, 3.2, 0.62), pillarMat);
     p1.position.set(0, 1.6, -2.2);
+    p1.castShadow = true;
     const p2 = p1.clone();
     p2.position.z = 2.2;
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 5.2), roofMat);
-    beam.position.set(0, 3.4, 0);
-    barn.add(p1, p2, beam);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.64, 5.3), beamMat);
+    beam.position.set(0, 3.36, 0);
+    beam.castShadow = true;
+    const roofCap = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.28, 5.6), roofCapMat);
+    roofCap.position.set(0, 3.82, 0);
+    roofCap.castShadow = true;
+    barn.add(p1, p2, beam, roofCap);
     group.add(barn);
 
-    const maxCargo = ageMode === 'toddler' ? 3 : 6;
+    const maxCargo = ageMode === 'toddler' ? 3 : 10;
     let cargoType: CargoTypeId = 'apple';
-    let loadedCount = ageMode === 'toddler' ? 2 : 3;
+    let loadedCount = ageMode === 'toddler' ? 2 : 5;
     let phase: 'LOAD' | 'COUNT' | 'DRIVE' | 'DONE' = 'LOAD';
     let wrongKey = 0;
     let numberChoices: number[] = [];
@@ -421,18 +752,26 @@ export function createMissionController(
         truck.cargoSlot.remove(truck.cargoSlot.children[0]);
       }
       cargoMeshes.length = 0;
+      // 10 non-clipping 2-layer slots inside bed interior (X: [-0.92, 0.92], Z: [-0.68, 0.68])
       const slots: [number, number, number][] = [
-        [-0.55, 0, -0.32],
-        [0, 0, -0.32],
-        [0.55, 0, -0.32],
-        [-0.55, 0, 0.32],
-        [0, 0, 0.32],
-        [0.55, 0, 0.32],
+        // Layer 1 (6 items resting on bed floor)
+        [-0.6, 0.05, -0.34],
+        [0, 0.05, -0.34],
+        [0.6, 0.05, -0.34],
+        [-0.6, 0.05, 0.34],
+        [0, 0.05, 0.34],
+        [0.6, 0.05, 0.34],
+        // Layer 2 (4 items stacked cleanly above Layer 1)
+        [-0.34, 0.52, -0.28],
+        [0.34, 0.52, -0.28],
+        [-0.34, 0.52, 0.28],
+        [0.34, 0.52, 0.28],
       ];
       for (let i = 0; i < loadedCount; i++) {
         const prop = buildCargoProp(cargoType);
         const [sx, sy, sz] = slots[i % slots.length];
-        prop.position.set(sx, sy + 0.05, sz);
+        prop.position.set(sx, sy, sz);
+        prop.userData.baseY = sy;
         truck.cargoSlot.add(prop);
         cargoMeshes.push(prop);
       }
@@ -460,6 +799,7 @@ export function createMissionController(
         loadedCount,
         targetCount: maxCargo,
         numberChoices,
+        hintKey: activeHintKey,
         wrongFeedbackKey: wrongKey,
         completed: phase === 'DONE',
       });
@@ -480,7 +820,8 @@ export function createMissionController(
       update: (dt, elapsed) => {
         if (phase === 'COUNT') {
           cargoMeshes.forEach((m, i) => {
-            m.position.y = 0.05 + Math.abs(Math.sin(elapsed * 3.5 + i * 0.7)) * 0.08;
+            const baseY = typeof m.userData.baseY === 'number' ? m.userData.baseY : 0.05;
+            m.position.y = baseY + Math.abs(Math.sin(elapsed * 3.5 + i * 0.7)) * 0.06;
           });
         } else if (phase === 'DRIVE') {
           truck.root.position.x += dt * 6.8;
@@ -495,9 +836,30 @@ export function createMissionController(
             callbacks.onCelebrate('angkut');
           }
         }
+        tickIdle(
+          dt,
+          phase === 'LOAD' || phase === 'COUNT',
+          () => {
+            if (phase === 'LOAD') {
+              return {
+                key: 'start_count',
+                sayId: 'Yuk tekan tombol Ayo Hitung!',
+                sayEn: "Tap Let's Count!",
+              };
+            }
+            const nw = NUMBER_WORDS[loadedCount];
+            return {
+              key: `count:${loadedCount}`,
+              sayId: `Hitung bareng yuk! Ada ${nw.id}!`,
+              sayEn: `Let's count! There are ${nw.en}!`,
+            };
+          },
+          emit,
+        );
       },
       handleRaycastHit: () => {},
       handleAction: (action, payload) => {
+        resetIdle(emit);
         if (action === 'SELECT_CARGO' && phase === 'LOAD') {
           const next = payload as CargoTypeId;
           cargoType = next;
@@ -576,52 +938,53 @@ export function createMissionController(
     const boardOriginX = -3.6;
     const boardOriginZ = rows === 1 ? 3.2 : 2.5;
 
-    // 3D City Water Hydrant on left inlet (row 0, col -1)
+    // Vintage Storybook Village Water Hydrant on left inlet (row 0, col -1)
     const hydrant = new THREE.Group();
     hydrant.position.set(boardOriginX - tileSize, 0, boardOriginZ);
-    const hydMat = new THREE.MeshStandardMaterial({ color: '#0284C7', roughness: 0.35, metalness: 0.3 });
+    const paperBump = getPaperBumpTexture(maxAnisotropy);
+    const hydMat = new THREE.MeshStandardMaterial({
+      map: createGouachePaintTexture('#1D7FB4', maxAnisotropy),
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.52,
+      metalness: 0.22,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: '#E2B454',
+      roughness: 0.36,
+      metalness: 0.56,
+    });
+    const hBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.48, 0.22, 16),
+      new THREE.MeshStandardMaterial({ color: '#C9BBA3', roughness: 0.88 }),
+    );
+    hBase.position.y = 0.11;
     const hBody = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 1.25, 16), hydMat);
-    hBody.position.y = 0.625;
+    hBody.position.y = 0.64;
     hBody.castShadow = true;
-    const hCap = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10), hydMat);
-    hCap.position.y = 1.25;
+    const hCap = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10), brassMat);
+    hCap.position.y = 1.27;
     const hSpout = new THREE.Mesh(
       new THREE.CylinderGeometry(0.18, 0.18, 0.55, 12),
-      new THREE.MeshStandardMaterial({ color: '#38BDF8', roughness: 0.25 }),
+      new THREE.MeshStandardMaterial({ color: '#46BBE8', roughness: 0.32 }),
     );
     hSpout.rotation.z = Math.PI / 2;
     hSpout.position.set(0.38, 0.38, 0);
-    hydrant.add(hBody, hCap, hSpout);
+    hydrant.add(hBase, hBody, hCap, hSpout);
     group.add(hydrant);
 
     // Connector hose from last pipe tile into truck rear
     const outRow = rows === 1 ? 0 : 1;
     const inletPipe = new THREE.Mesh(
       new THREE.CylinderGeometry(0.2, 0.2, 1.85, 12),
-      new THREE.MeshStandardMaterial({ color: '#64748B', roughness: 0.4, metalness: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: '#6E645C', roughness: 0.52, metalness: 0.38 }),
     );
     inletPipe.rotation.z = Math.PI / 2;
     inletPipe.position.set(boardOriginX + cols * tileSize - 0.15, 0.38, boardOriginZ + outRow * tileSize);
     group.add(inletPipe);
 
-    // Build solvable pipe puzzle layout:
-    // Toddler (1x3): 3 straight pipes: [straight, straight, straight] — start 1 or 2 rotated!
-    // Preschool (2x3): Path goes (0,0) straight -> (0,1) elbow(down-left=rot2) -> (1,1) elbow(top-right=rot0) -> (1,2) straight
-    const pipeSpecs: { row: number; col: number; type: 'straight' | 'elbow'; startRot: number }[] =
-      rows === 1
-        ? [
-            { row: 0, col: 0, type: 'straight', startRot: 1 },
-            { row: 0, col: 1, type: 'straight', startRot: 0 },
-            { row: 0, col: 2, type: 'straight', startRot: 1 },
-          ]
-        : [
-            { row: 0, col: 0, type: 'straight', startRot: 1 },
-            { row: 0, col: 1, type: 'elbow', startRot: 0 }, // needs rot 2 (bottom+left: [2,3])
-            { row: 0, col: 2, type: 'elbow', startRot: 1 },
-            { row: 1, col: 0, type: 'elbow', startRot: 2 },
-            { row: 1, col: 1, type: 'elbow', startRot: 3 }, // needs rot 0 (top+right: [0,1])
-            { row: 1, col: 2, type: 'straight', startRot: 1 },
-          ];
+    // P2-1: Generate randomized solvable pipe layout (3 templates for Prasekolah, ≥2 tiles scrambled)
+    const { templateId: pipeTemplateId, specs: pipeSpecs } = generateRandomizedPipeSpecs(rows);
 
     const pipeStates: PipeTileState[] = [];
     const pipeVisuals: {
@@ -642,7 +1005,7 @@ export function createMissionController(
       };
       pipeStates.push(state);
 
-      const vis = buildPipeMesh(spec.type, idx);
+      const vis = buildPipeMesh(spec.type, idx, maxAnisotropy);
       vis.group.position.set(
         boardOriginX + spec.col * tileSize,
         0.04,
@@ -698,10 +1061,10 @@ export function createMissionController(
       }
 
       pipeStates.forEach((p, i) => {
-        pipeVisuals[i].pipeMat.color.set(p.connected ? '#38BDF8' : '#94A3B8');
-        pipeVisuals[i].pipeMat.emissive.set(p.connected ? '#0284C7' : '#000000');
+        pipeVisuals[i].pipeMat.color.set(p.connected ? '#46BBE8' : '#9BA5AF');
+        pipeVisuals[i].pipeMat.emissive.set(p.connected ? '#1484B8' : '#000000');
         pipeVisuals[i].pipeMat.emissiveIntensity = p.connected ? 0.35 : 0;
-        pipeVisuals[i].baseMat.color.set(p.connected ? '#BAE6FD' : '#E2E8F0');
+        pipeVisuals[i].baseMat.color.set(p.connected ? '#C7ECFA' : '#FAF1DF');
       });
 
       return reachesTank;
@@ -727,7 +1090,9 @@ export function createMissionController(
         pipes: pipeStates.map((p) => ({ ...p })),
         pipeCols: cols,
         pipeRows: rows,
+        pipeTemplateId,
         tankFill,
+        hintKey: activeHintKey,
         completed: phase === 'DONE',
       });
     };
@@ -742,6 +1107,7 @@ export function createMissionController(
       if (phase !== 'PUZZLE') return;
       const p = pipeStates[idx];
       if (!p) return;
+      resetIdle();
       p.rotation = (p.rotation + 1) % 4;
       pipeVisuals[idx].targetAngle -= Math.PI / 2;
       soundEngine.playPipeClick();
@@ -753,6 +1119,8 @@ export function createMissionController(
       }
       emit();
     };
+
+    let lastEmittedFillStep = 0;
 
     return {
       vehicleId: 'tangki',
@@ -776,7 +1144,11 @@ export function createMissionController(
             soundEngine.speakBilingual('Tangki Penuh! Berangkat!', 'Tank Full! Let us go!');
             emit();
           } else {
-            emit();
+            const fillStep = Math.floor(tankFill * 20);
+            if (fillStep !== lastEmittedFillStep) {
+              lastEmittedFillStep = fillStep;
+              emit();
+            }
           }
         } else if (phase === 'DRIVE') {
           truck.root.position.x += dt * 5.8;
@@ -791,6 +1163,22 @@ export function createMissionController(
             callbacks.onCelebrate('tangki');
           }
         }
+        tickIdle(
+          dt,
+          phase === 'PUZZLE',
+          () => {
+            const firstWrong = pipeStates.find((p) => p.type === 'straight' && p.rotation % 2 !== 0) ||
+              pipeStates.find((p) => !p.connected);
+            if (!firstWrong) return null;
+            pipeVisuals[firstWrong.index].baseMat.color.set('#FDE047');
+            return {
+              key: `pipe:${firstWrong.index}`,
+              sayId: `Ketuk Pipa ${firstWrong.index + 1} untuk memutarnya!`,
+              sayEn: `Tap Pipe ${firstWrong.index + 1} to rotate it!`,
+            };
+          },
+          emit,
+        );
       },
       handleRaycastHit: (hitObj) => {
         if (typeof hitObj.userData.pipeIndex === 'number') {
@@ -813,28 +1201,39 @@ export function createMissionController(
     truck.root.position.set(2.4, 0, 3.2);
     truck.root.rotation.y = 0;
 
-    const maxCount = ageMode === 'toddler' ? 3 : 5;
+    const maxCount = ageMode === 'toddler' ? 3 : 10;
     const countTarget =
       ageMode === 'toddler'
         ? 1 + Math.floor(Math.random() * 3)
-        : 2 + Math.floor(Math.random() * 4);
+        : 4 + Math.floor(Math.random() * 7); // 4..10 in Prasekolah mode
     const numberChoices = makeNumberChoices(countTarget, maxCount, ageMode === 'toddler' ? 3 : 4);
     const tolerance = ageMode === 'toddler' ? 0.36 : 0.22;
     const totalDrops = ageMode === 'toddler' ? 1 : 2;
 
-    // Counting crates displayed neatly in front-left for Phase 1
+    // Counting crates displayed neatly in front-left for Phase 1 (supports 1..10 without clipping)
     const countGroup = new THREE.Group();
     countGroup.position.set(-2.5, 0, 3.2);
     group.add(countGroup);
 
-    const crateGeo = new THREE.BoxGeometry(0.76, 0.76, 0.76);
-    const crateMat = new THREE.MeshStandardMaterial({ color: '#F97316', roughness: 0.55 });
+    const crateSize = countTarget > 6 ? 0.64 : 0.74;
+    const crateGap = crateSize + 0.16;
+    const colsPerRow = countTarget > 6 ? 4 : 3;
+    const paperBump = getPaperBumpTexture(maxAnisotropy);
+    const crateGeo = new THREE.BoxGeometry(crateSize, crateSize, crateSize);
+    const crateMat = new THREE.MeshStandardMaterial({
+      map: createWoodPlankTexture('#DC8232', maxAnisotropy),
+      bumpMap: paperBump,
+      bumpScale: 0.025,
+      roughness: 0.72,
+    });
     const countCrates: THREE.Mesh[] = [];
     for (let i = 0; i < countTarget; i++) {
       const c = new THREE.Mesh(crateGeo, crateMat);
-      const col = i % 3;
-      const row = Math.floor(i / 3);
-      c.position.set((col - 1) * 0.96, 0.38 + row * 0.82, 0);
+      const row = Math.floor(i / colsPerRow);
+      const col = i % colsPerRow;
+      const itemsInRow = Math.min(colsPerRow, countTarget - row * colsPerRow);
+      const xOffset = (col - (itemsInRow - 1) / 2) * crateGap;
+      c.position.set(xOffset, crateSize / 2 + row * (crateSize + 0.08), 0);
       c.castShadow = true;
       c.receiveShadow = true;
       countGroup.add(c);
@@ -849,7 +1248,12 @@ export function createMissionController(
 
     const fulcrum = new THREE.Mesh(
       new THREE.ConeGeometry(0.65, 1.05, 4),
-      new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.6 }),
+      new THREE.MeshStandardMaterial({
+        color: '#63564B',
+        bumpMap: paperBump,
+        bumpScale: 0.025,
+        roughness: 0.78,
+      }),
     );
     fulcrum.position.y = 0.525;
     fulcrum.rotation.y = Math.PI / 4;
@@ -862,27 +1266,39 @@ export function createMissionController(
 
     const plank = new THREE.Mesh(
       new THREE.BoxGeometry(4.2, 0.22, 1.5),
-      new THREE.MeshStandardMaterial({ color: '#D97706', roughness: 0.65 }),
+      new THREE.MeshStandardMaterial({
+        map: createWoodPlankTexture('#C5853B', maxAnisotropy, 2, 1),
+        bumpMap: paperBump,
+        bumpScale: 0.028,
+        roughness: 0.76,
+      }),
     );
     plank.castShadow = true;
     plank.receiveShadow = true;
     plankPivot.add(plank);
 
-    // Glowing Green Balance Target Zone in center of plank
+    // Painted Meadow-Green Balance Target Zone in center of plank
     const zoneMat = new THREE.MeshStandardMaterial({
-      color: '#22C55E',
-      emissive: '#16A34A',
-      emissiveIntensity: 0.4,
-      roughness: 0.35,
+      map: createGouachePaintTexture('#44A854', maxAnisotropy),
+      emissive: '#2B7D3B',
+      emissiveIntensity: 0.34,
+      roughness: 0.48,
     });
     const zoneWidth = tolerance * 3.4;
     const centerZone = new THREE.Mesh(new THREE.BoxGeometry(zoneWidth, 0.24, 1.54), zoneMat);
     plankPivot.add(centerZone);
 
-    // Suspended load crate hanging beneath the crane hook
+    // Suspended wooden load crate hanging beneath the crane hook
+    const paintedWoodTex = createWoodPlankTexture('#F2EBE0', maxAnisotropy);
     const hangingCrate = new THREE.Mesh(
       new THREE.BoxGeometry(0.86, 0.86, 0.86),
-      new THREE.MeshStandardMaterial({ color: '#3B82F6', roughness: 0.42 }),
+      new THREE.MeshStandardMaterial({
+        map: paintedWoodTex,
+        color: '#4E92D6',
+        bumpMap: paperBump,
+        bumpScale: 0.025,
+        roughness: 0.62,
+      }),
     );
     hangingCrate.position.set(0, -0.68, 0);
     hangingCrate.castShadow = true;
@@ -901,6 +1317,7 @@ export function createMissionController(
     let targetPlankTilt = 0;
     let droppedCount = 0;
     let wrongKey = 0;
+    let lastCraneSoundTime = 0;
 
     const emit = () => {
       let promptId = 'Hitung dulu jumlah peti agar Truk Crane menyala!';
@@ -933,6 +1350,7 @@ export function createMissionController(
         craneBalanced: Math.abs(boomOffset) <= tolerance,
         craneDroppedCount: droppedCount,
         craneTotalDrops: totalDrops,
+        hintKey: activeHintKey,
         wrongFeedbackKey: wrongKey,
         completed: phase === 'DONE',
       });
@@ -969,9 +1387,38 @@ export function createMissionController(
           plankTilt = THREE.MathUtils.damp(plankTilt, targetPlankTilt, 8, dt);
           plankPivot.rotation.z = plankTilt;
         }
+        tickIdle(
+          dt,
+          phase === 'COUNT' || phase === 'BALANCE',
+          () => {
+            if (phase === 'COUNT') {
+              const nw = NUMBER_WORDS[countTarget];
+              return {
+                key: `craneCount:${countTarget}`,
+                sayId: `Hitung petinya yuk! Ada ${nw.id}!`,
+                sayEn: `Count the crates! There are ${nw.en}!`,
+              };
+            }
+            if (Math.abs(boomOffset) <= tolerance) {
+              return {
+                key: 'craneDrop',
+                sayId: 'Sudah di zona hijau! Tekan Turunkan!',
+                sayEn: 'In the green zone! Press Drop!',
+              };
+            }
+            const dir = boomOffset > 0 ? -1 : 1;
+            return {
+              key: `craneMove:${dir}`,
+              sayId: dir < 0 ? 'Geser ke Kiri menuju zona hijau!' : 'Geser ke Kanan menuju zona hijau!',
+              sayEn: dir < 0 ? 'Move Left to the green zone!' : 'Move Right to the green zone!',
+            };
+          },
+          emit,
+        );
       },
       handleRaycastHit: () => {},
       handleAction: (action, payload) => {
+        resetIdle();
         if (action === 'CRANE_COUNT' && phase === 'COUNT') {
           const pick = payload as number;
           const nw = NUMBER_WORDS[pick];
@@ -993,9 +1440,17 @@ export function createMissionController(
             emit();
           }
         } else if (action === 'CRANE_MOVE' && phase === 'BALANCE') {
-          const dir = payload as number; // -1 or +1
-          boomOffset = THREE.MathUtils.clamp(boomOffset + dir * 0.18, -0.95, 0.95);
-          soundEngine.playCraneMove();
+          const isObj = typeof payload === 'object' && payload !== null;
+          const dir = isObj ? (payload as { dir: number; step?: number }).dir : (payload as number);
+          const step = isObj && typeof (payload as { step?: number }).step === 'number'
+            ? (payload as { step: number }).step
+            : 0.18;
+          boomOffset = THREE.MathUtils.clamp(boomOffset + dir * step, -0.95, 0.95);
+          const now = Date.now();
+          if (now - lastCraneSoundTime >= 220) {
+            lastCraneSoundTime = now;
+            soundEngine.playCraneMove();
+          }
           emit();
         } else if (action === 'CRANE_DROP' && phase === 'BALANCE') {
           phase = 'DROPPING';
@@ -1010,8 +1465,11 @@ export function createMissionController(
               const placed = new THREE.Mesh(
                 new THREE.BoxGeometry(0.86, 0.86, 0.86),
                 new THREE.MeshStandardMaterial({
-                  color: droppedCount === 1 ? '#3B82F6' : '#10B981',
-                  roughness: 0.42,
+                  map: paintedWoodTex,
+                  color: droppedCount === 1 ? '#4E92D6' : '#48A868',
+                  bumpMap: paperBump,
+                  bumpScale: 0.025,
+                  roughness: 0.62,
                 }),
               );
               placed.position.set(boomOffset * 1.1, 0.54 + (droppedCount - 1) * 0.86, 0);
@@ -1083,60 +1541,111 @@ export function createMissionController(
     }
     const letterChoices = Array.from(letterSet).sort((a, b) => a.letter.localeCompare(b.letter));
 
-    // Giant 3D Letter Emergency Billboard near fire truck
+    // Giant 3D Letter Emergency Storybook Plaque near fire truck
+    const paperBump = getPaperBumpTexture(maxAnisotropy);
     const signTex = createSignTexture(
       targetLetter.letter,
       `${targetLetter.wordId} / ${targetLetter.wordEn}`,
-      '#DC2626',
-      '#FFFFFF',
+      '#CB3329',
+      '#FFFDF6',
       maxAnisotropy,
     );
     const signGroup = new THREE.Group();
     signGroup.position.set(-1.2, 0, 0.2);
     const post = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.14, 0.14, 2.2, 10),
-      new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.6 }),
+      new THREE.CylinderGeometry(0.14, 0.16, 2.2, 10),
+      new THREE.MeshStandardMaterial({ color: '#6E4A2D', roughness: 0.84 }),
     );
     post.position.y = 1.1;
     const board = new THREE.Mesh(
       new THREE.BoxGeometry(2.4, 2.4, 0.18),
-      new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.4 }),
+      new THREE.MeshStandardMaterial({
+        map: signTex,
+        bumpMap: paperBump,
+        bumpScale: 0.015,
+        roughness: 0.58,
+      }),
     );
     board.position.y = 2.8;
     board.castShadow = true;
     signGroup.add(post, board);
     group.add(signGroup);
 
-    // Storybook Building with Animated 3D Flame Clusters on the right
+    // Storybook Timber-and-Terracotta Village Cottage with Animated 3D Flame Clusters
     const building = new THREE.Group();
     building.position.set(3.2, 0, -0.4);
     const bWall = new THREE.Mesh(
       new THREE.BoxGeometry(4.4, 3.4, 2.8),
-      new THREE.MeshStandardMaterial({ color: '#FEF3C7', roughness: 0.78 }),
+      new THREE.MeshStandardMaterial({
+        map: createCottageWallTexture('#F6ECD7', '#5E422E', maxAnisotropy),
+        bumpMap: paperBump,
+        bumpScale: 0.03,
+        roughness: 0.88,
+      }),
     );
     bWall.position.y = 1.7;
     bWall.castShadow = true;
     bWall.receiveShadow = true;
-    const bRoof = new THREE.Mesh(
-      new THREE.ConeGeometry(3.4, 1.8, 4),
-      new THREE.MeshStandardMaterial({ color: '#EA580C', roughness: 0.55 }),
-    );
-    bRoof.position.y = 4.3;
+    const bRoofMat = new THREE.MeshStandardMaterial({
+      map: createRoofShingleTexture('terracotta', maxAnisotropy),
+      bumpMap: paperBump,
+      bumpScale: 0.04,
+      roughness: 0.82,
+    });
+    const bRoof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 1.85, 4), bRoofMat);
+    bRoof.position.y = 4.32;
     bRoof.rotation.y = Math.PI / 4;
     bRoof.castShadow = true;
-    building.add(bWall, bRoof);
+    const bChimney = new THREE.Mesh(
+      new THREE.BoxGeometry(0.65, 1.35, 0.65),
+      new THREE.MeshStandardMaterial({ color: '#CFC2AD', roughness: 0.9 }),
+    );
+    bChimney.position.set(1.25, 4.7, -0.45);
+    building.add(bWall, bRoof, bChimney);
 
-    // Windows & door
-    const wMat = new THREE.MeshStandardMaterial({ color: '#7DD3FC', roughness: 0.2 });
-    const dMat = new THREE.MeshStandardMaterial({ color: '#92400E', roughness: 0.7 });
-    const bDoor = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.35, 0.12), dMat);
-    bDoor.position.set(0, 0.68, 1.42);
-    const winL = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.85, 0.12), wMat);
-    winL.position.set(-1.3, 2.2, 1.42);
-    const winR = winL.clone();
-    winR.position.x = 1.3;
-    building.add(bDoor, winL, winR);
+    // Storybook windows with shutters, flower boxes & oak door with porch awning
+    const wMat = new THREE.MeshStandardMaterial({
+      color: '#CBE7F8',
+      emissive: '#FFE8B0',
+      emissiveIntensity: 0.16,
+      roughness: 0.25,
+    });
+    const frameMat = new THREE.MeshStandardMaterial({ color: '#5E422E', roughness: 0.85 });
+    const shutterMat = new THREE.MeshStandardMaterial({ color: '#568055', roughness: 0.8 });
+    const dMat = new THREE.MeshStandardMaterial({
+      map: createWoodPlankTexture('#8E5A32', maxAnisotropy),
+      roughness: 0.82,
+    });
+    const bDoor = new THREE.Mesh(new THREE.BoxGeometry(0.88, 1.38, 0.14), dMat);
+    bDoor.position.set(0, 0.69, 1.42);
+    const porch = new THREE.Mesh(new THREE.BoxGeometry(1.32, 0.14, 0.66), bRoofMat);
+    porch.position.set(0, 1.54, 1.66);
+    porch.rotation.x = 0.28;
+    building.add(bDoor, porch);
+
+    for (const wx of [-1.3, 1.3]) {
+      const wFrame = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.98, 0.1), frameMat);
+      wFrame.position.set(wx, 2.2, 1.41);
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.84, 0.12), wMat);
+      win.position.set(wx, 2.2, 1.43);
+      const shL = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.88, 0.1), shutterMat);
+      shL.position.set(wx - 0.62, 2.2, 1.43);
+      const shR = shL.clone();
+      shR.position.x = wx + 0.62;
+      const fBox = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.22, 0.26), frameMat);
+      fBox.position.set(wx, 1.66, 1.52);
+      building.add(wFrame, win, shL, shR, fBox);
+    }
+    // Invisible front spray plane so continuous drag-to-spray sweeps smoothly across the building
+    const spraySurface = new THREE.Mesh(
+      new THREE.PlaneGeometry(5.6, 5.4),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    spraySurface.position.set(0, 2.5, 1.55);
+    spraySurface.userData.isSpraySurface = true;
+    building.add(spraySurface);
     group.add(building);
+    raycastTargets.push(spraySurface);
 
     // Flame clusters
     const flamePositions: THREE.Vector3[] =
@@ -1242,7 +1751,10 @@ export function createMissionController(
     let wrongKey = 0;
     let activeSprayTarget: number | null = null;
     let sprayTimer = 0;
+    let useDragTarget = false;
+    let lastSpraySoundTime = 0;
     const _nozzleWorld = new THREE.Vector3();
+    const _dragTargetPos = new THREE.Vector3();
 
     const emit = () => {
       const remaining = flames.filter((f) => f.alive).map((f) => f.index);
@@ -1252,8 +1764,8 @@ export function createMissionController(
         promptId = 'Wiu-wiu! Truk Pemadam melaju ke lokasi api!';
         promptEn = 'Wee-woo! Fire Truck rushing to the fire!';
       } else if (phase === 'SPRAY') {
-        promptId = `Ketuk api di rumah 3D untuk menyemprotkan air! (${remaining.length} api tersisa)`;
-        promptEn = `Tap the 3D flames to spray water! (${remaining.length} left)`;
+        promptId = `Ketuk atau geser jari ke api di rumah 3D! (${remaining.length} api tersisa)`;
+        promptEn = `Tap or drag across the 3D flames to spray water! (${remaining.length} left)`;
       } else if (phase === 'DONE') {
         promptId = 'Semua api padam! Pahlawan pemadam hebat!';
         promptEn = 'All fires are out! Hero firefighter!';
@@ -1268,6 +1780,7 @@ export function createMissionController(
         letterChoices,
         flamesRemaining: remaining,
         totalFlames: flames.length,
+        hintKey: activeHintKey,
         wrongFeedbackKey: wrongKey,
         completed: phase === 'DONE',
       });
@@ -1283,10 +1796,16 @@ export function createMissionController(
       if (phase !== 'SPRAY') return;
       const f = flames[idx];
       if (!f || !f.alive) return;
+      resetIdle();
+      useDragTarget = false;
       activeSprayTarget = idx;
       sprayTimer = 0.65;
       waterJetGroup.visible = true;
-      soundEngine.playWaterSplash();
+      const now = Date.now();
+      if (now - lastSpraySoundTime >= 160) {
+        lastSpraySoundTime = now;
+        soundEngine.playWaterSplash();
+      }
       f.alive = false;
       f.outer.visible = false;
       f.inner.visible = false;
@@ -1353,12 +1872,14 @@ export function createMissionController(
           }
         }
 
-        // Update 3D arcing water jet drops
-        if (sprayTimer > 0 && activeSprayTarget !== null) {
+        // Update 3D arcing water jet drops (supports both single tap and continuous drag-spray)
+        if (sprayTimer > 0 && (useDragTarget || activeSprayTarget !== null)) {
           sprayTimer -= dt;
           if (truck.nozzleGroup) {
             truck.nozzleGroup.getWorldPosition(_nozzleWorld);
-            const targetPos = flamePositions[activeSprayTarget];
+            const targetPos = useDragTarget
+              ? _dragTargetPos
+              : flamePositions[activeSprayTarget!];
             truck.nozzleGroup.lookAt(targetPos);
 
             jetDrops.forEach((drop, i) => {
@@ -1371,7 +1892,72 @@ export function createMissionController(
           }
           if (sprayTimer <= 0) {
             waterJetGroup.visible = false;
+            useDragTarget = false;
           }
+        }
+
+        tickIdle(
+          dt,
+          phase === 'LETTER' || phase === 'SPRAY',
+          () => {
+            if (phase === 'LETTER') {
+              return {
+                key: `letter:${targetLetter.letter}`,
+                sayId: `Ini huruf ${targetLetter.letter}! Ketuk huruf ${targetLetter.letter}!`,
+                sayEn: `Here is letter ${targetLetter.letter}! Tap ${targetLetter.letter}!`,
+              };
+            }
+            const firstAlive = flames.find((fl) => fl.alive);
+            if (!firstAlive) return null;
+            return {
+              key: `flame:${firstAlive.index}`,
+              sayId: `Ayo semprot api nomor ${firstAlive.index + 1}!`,
+              sayEn: `Spray fire number ${firstAlive.index + 1}!`,
+            };
+          },
+          emit,
+        );
+      },
+      supportsDragSpray: () => phase === 'SPRAY',
+      handleDragSpray: (worldPoint, hitObj) => {
+        if (phase !== 'SPRAY') return;
+        resetIdle();
+        _dragTargetPos.copy(worldPoint);
+        useDragTarget = true;
+        sprayTimer = 0.25;
+        waterJetGroup.visible = true;
+
+        const now = Date.now();
+        if (now - lastSpraySoundTime >= 240) {
+          lastSpraySoundTime = now;
+          soundEngine.playWaterSplash();
+        }
+
+        // Direct hit on flame sphere
+        if (hitObj && typeof hitObj.userData.flameIndex === 'number') {
+          sprayFlame(hitObj.userData.flameIndex);
+          // Keep smooth drag jet aiming at finger while dragging
+          useDragTarget = true;
+          sprayTimer = 0.25;
+          return;
+        }
+
+        // Proximity extinguish while sweeping jet across burning wall/roof
+        for (const f of flames) {
+          if (!f.alive) continue;
+          const dx = worldPoint.x - flamePositions[f.index].x;
+          const dy = worldPoint.y - (flamePositions[f.index].y + 0.45);
+          if (dx * dx + dy * dy <= 1.25 * 1.25) {
+            sprayFlame(f.index);
+            useDragTarget = true;
+            sprayTimer = 0.25;
+            break;
+          }
+        }
+      },
+      stopDragSpray: () => {
+        if (useDragTarget) {
+          sprayTimer = Math.min(sprayTimer, 0.12);
         }
       },
       handleRaycastHit: (hitObj) => {
@@ -1380,6 +1966,7 @@ export function createMissionController(
         }
       },
       handleAction: (action, payload) => {
+        resetIdle();
         if (action === 'PICK_LETTER' && phase === 'LETTER') {
           const picked = payload as string;
           if (picked === targetLetter.letter) {
@@ -1428,8 +2015,19 @@ export function createMissionController(
     labelSub: string,
     category: WasteCategory,
   ) => {
-    const bodyMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.45 });
-    const lidMat = new THREE.MeshStandardMaterial({ color: '#1E293B', roughness: 0.6 });
+    const paperBump = getPaperBumpTexture(maxAnisotropy);
+    const bodyMat = new THREE.MeshStandardMaterial({
+      map: createGouachePaintTexture(colorHex, maxAnisotropy),
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.62,
+    });
+    const lidMat = new THREE.MeshStandardMaterial({
+      color: '#4E4138',
+      bumpMap: paperBump,
+      bumpScale: 0.018,
+      roughness: 0.72,
+    });
     const body = new THREE.Mesh(new THREE.BoxGeometry(1.45, 1.65, 1.25), bodyMat);
     body.position.y = 0.825;
     body.castShadow = true;
@@ -1440,10 +2038,10 @@ export function createMissionController(
     lid.position.y = 1.72;
     targetGroup.add(lid);
 
-    const signTex = createSignTexture(labelBig, labelSub, colorHex, '#FFFFFF', maxAnisotropy);
+    const signTex = createSignTexture(labelBig, labelSub, colorHex, '#FFFDF6', maxAnisotropy);
     const labelPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(1.18, 1.18),
-      new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.4 }),
+      new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.56 }),
     );
     labelPlane.position.set(0, 0.86, 0.64);
     targetGroup.add(labelPlane);
@@ -1464,8 +2062,8 @@ export function createMissionController(
     return signTex;
   };
 
-  const orgTex = makeBin(orgBinGroup, '#16A34A', 'ORG', 'Organik', 'organic');
-  const nonOrgTex = makeBin(nonOrgBinGroup, '#EAB308', 'NON', 'Non-Organik', 'non-organic');
+  const orgTex = makeBin(orgBinGroup, '#2B8E4C', 'ORG', 'Organik', 'organic');
+  const nonOrgTex = makeBin(nonOrgBinGroup, '#DCA21A', 'NON', 'Non-Organik', 'non-organic');
 
   // Generate balanced list of waste items
   const organics = WASTE_CATALOG.filter((w) => w.category === 'organic');
@@ -1543,6 +2141,7 @@ export function createMissionController(
       nonOrganicCount,
       wasteCountCategory,
       wasteCountChoices,
+      hintKey: activeHintKey,
       wrongFeedbackKey: wrongKey,
       completed: phase === 'DONE',
     });
@@ -1644,9 +2243,39 @@ export function createMissionController(
           callbacks.onCelebrate('sampah');
         }
       }
+
+      tickIdle(
+        dt,
+        phase === 'SORT' || phase === 'COUNT',
+        () => {
+          if (phase === 'SORT') {
+            const selectedItem =
+              wasteItems.find((w) => w.uid === selectedWasteUid && !w.sorted) ||
+              wasteItems.find((w) => !w.sorted);
+            if (!selectedItem) return null;
+            selectedWasteUid = selectedItem.uid;
+            const catId = selectedItem.category === 'organic' ? 'Organik' : 'Non Organik';
+            const catEn = selectedItem.category === 'organic' ? 'Organic' : 'Non-Organic';
+            return {
+              key: `bin:${selectedItem.category}`,
+              sayId: `Masukkan ${selectedItem.nameId} ke tong ${catId}!`,
+              sayEn: `Put ${selectedItem.nameEn} into the ${catEn} bin!`,
+            };
+          }
+          const target = wasteCountCategory === 'organic' ? organicCount : nonOrganicCount;
+          const nw = NUMBER_WORDS[target];
+          return {
+            key: `wasteCount:${target}`,
+            sayId: `Hitung bareng yuk! Ada ${nw.id}!`,
+            sayEn: `Let's count! There are ${nw.en}!`,
+          };
+        },
+        emit,
+      );
     },
     handleRaycastHit: (hitObj) => {
       if (phase !== 'SORT') return;
+      resetIdle();
       if (typeof hitObj.userData.wasteUid === 'number') {
         const item = wasteItems.find((w) => w.uid === hitObj.userData.wasteUid && !w.sorted);
         if (item) {
@@ -1660,6 +2289,7 @@ export function createMissionController(
       }
     },
     handleAction: (action, payload) => {
+      resetIdle();
       if (action === 'SELECT_WASTE' && phase === 'SORT') {
         const uid = payload as number;
         const item = wasteItems.find((w) => w.uid === uid && !w.sorted);

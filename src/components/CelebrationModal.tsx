@@ -1,10 +1,19 @@
-import { Home, RotateCcw, Star } from 'lucide-react';
-import { VEHICLE_MAP, type VehicleId } from '../types/game';
+import { ArrowRight, Home, RotateCcw, Star } from 'lucide-react';
+import { pickLang, VEHICLE_MAP, VEHICLES, type LanguageMode, type VehicleId } from '../types/game';
+import { TruckIllustration } from './TruckIllustration';
 
 interface CelebrationModalProps {
   vehicleId: VehicleId;
+  languageMode: LanguageMode;
   onPlayAgain: () => void;
+  onNextTruck: (nextVehicleId: VehicleId) => void;
   onBackToGarage: () => void;
+}
+
+export function getNextVehicleId(currentId: VehicleId): VehicleId {
+  const idx = VEHICLES.findIndex((v) => v.id === currentId);
+  if (idx < 0) return VEHICLES[0].id;
+  return VEHICLES[(idx + 1) % VEHICLES.length].id;
 }
 
 const CONFETTI_PARTICLES = [
@@ -40,13 +49,23 @@ const CONFETTI_PARTICLES = [
 
 export function CelebrationModal({
   vehicleId,
+  languageMode,
   onPlayAgain,
+  onNextTruck,
   onBackToGarage,
 }: CelebrationModalProps) {
   const vehicle = VEHICLE_MAP[vehicleId];
+  const nextVehicleId = getNextVehicleId(vehicleId);
+  const nextVehicle = VEHICLE_MAP[nextVehicleId];
+  const nextTruckName = languageMode === 'en' ? nextVehicle.nameEn : nextVehicle.nameId;
 
   return (
-    <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center overflow-hidden bg-slate-900/35 p-4">
+    <div
+      className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center overflow-hidden bg-[#2D1F14]/45 p-3 sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={pickLang(languageMode, 'Perayaan Misi Selesai', 'Mission Complete Celebration')}
+    >
       {/* Festive CSS-based Particle Confetti Layer */}
       <div
         className="confetti-layer pointer-events-none fixed inset-0 overflow-hidden"
@@ -60,42 +79,76 @@ export function CelebrationModal({
         ))}
       </div>
 
-      <div className="animate-pop-in relative z-10 w-full max-w-md rounded-3xl border-2 border-amber-300 bg-white p-6 text-center shadow-2xl">
+      <div className="animate-pop-in storybook-paper relative z-10 max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl p-5 text-center sm:p-6">
         <div className="mx-auto flex items-center justify-center gap-2">
-          <Star className="h-10 w-10 fill-amber-400 text-amber-500" />
-          <Star className="h-14 w-14 fill-amber-400 text-amber-500 -mt-3" />
-          <Star className="h-10 w-10 fill-amber-400 text-amber-500" />
+          <Star className="h-8 w-8 fill-amber-400 text-amber-600 sm:h-9 sm:w-9" />
+          <Star className="h-11 w-11 fill-amber-400 text-amber-600 -mt-2 sm:h-12 sm:w-12 sm:-mt-2.5" />
+          <Star className="h-8 w-8 fill-amber-400 text-amber-600 sm:h-9 sm:w-9" />
         </div>
 
-        <h2 className="font-display mt-3 text-3xl font-extrabold text-slate-900">
-          Hebat Sekali!
-        </h2>
-        <p className="mt-1 text-base font-bold text-amber-600">Great Job!</p>
+        {/* Reward 2D Picture-Book Portrait */}
+        <TruckIllustration
+          vehicleId={vehicleId}
+          className="mx-auto mt-3 h-24 w-28 border-2 border-[#DEC195] shadow-xs"
+        />
 
-        <p className="mt-3 text-sm font-medium text-slate-600">
-          Kamu berhasil menyelesaikan misi{' '}
-          <span className="font-extrabold text-slate-900">{vehicle.nameId}</span> ({vehicle.nameEn})
-          dan mendapatkan 1 bintang baru.
+        <h2 className="font-display mt-2.5 text-2xl font-extrabold text-[#2D1F14] sm:text-3xl">
+          {languageMode === 'en' ? 'Great Job!' : 'Hebat Sekali!'}
+        </h2>
+        {languageMode === 'bilingual' && (
+          <p className="mt-0.5 text-sm font-bold text-[#B86A1E] sm:text-base">Great Job!</p>
+        )}
+
+        <p className="mt-2 text-sm font-medium text-[#5A422D]">
+          {languageMode === 'en' ? (
+            <>
+              You completed the <span className="font-extrabold text-[#2D1F14]">{vehicle.nameEn}</span>{' '}
+              mission and earned 1 new star!
+            </>
+          ) : (
+            <>
+              Kamu berhasil menyelesaikan misi{' '}
+              <span className="font-extrabold text-[#2D1F14]">{vehicle.nameId}</span>
+              {languageMode === 'bilingual' ? ` (${vehicle.nameEn})` : ''} dan mendapatkan 1 bintang baru.
+            </>
+          )}
         </p>
 
-        <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
+        {/* Primary "Next Truck" shortcut for continuous toddler play */}
+        <div className="mt-4 flex flex-col gap-2.5">
           <button
             type="button"
-            onClick={onPlayAgain}
-            className="flex flex-1 min-h-[54px] items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 text-base font-extrabold text-white shadow-sm transition-transform active:scale-95 hover:bg-emerald-700 whitespace-nowrap cursor-pointer"
+            onClick={() => onNextTruck(nextVehicleId)}
+            className="btn-tactile flex min-h-[54px] w-full items-center justify-center gap-2 rounded-2xl px-5 text-base font-extrabold text-white whitespace-nowrap cursor-pointer"
+            style={{ backgroundColor: nextVehicle.accentHex }}
           >
-            <RotateCcw className="h-5 w-5" />
-            <span>Main Lagi</span>
+            <span>
+              {languageMode === 'en'
+                ? `Next Truck: ${nextTruckName}`
+                : `Truk Berikutnya: ${nextTruckName}`}
+            </span>
+            <ArrowRight className="h-5 w-5 shrink-0" />
           </button>
 
-          <button
-            type="button"
-            onClick={onBackToGarage}
-            className="flex flex-1 min-h-[54px] items-center justify-center gap-2 rounded-2xl border-2 border-slate-200 bg-slate-50 px-5 text-base font-extrabold text-slate-800 transition-transform active:scale-95 hover:bg-slate-100 whitespace-nowrap cursor-pointer"
-          >
-            <Home className="h-5 w-5" />
-            <span>Pilih Truk Lain</span>
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={onPlayAgain}
+              className="btn-tactile flex flex-1 min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 text-sm font-extrabold text-white whitespace-nowrap cursor-pointer"
+            >
+              <RotateCcw className="h-4 w-4" />
+              <span>{languageMode === 'en' ? 'Play Again' : 'Main Lagi'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onBackToGarage}
+              className="btn-wood-secondary flex flex-1 min-h-[50px] items-center justify-center gap-2 rounded-2xl px-4 text-sm font-extrabold whitespace-nowrap cursor-pointer"
+            >
+              <Home className="h-4 w-4 text-[#5A3A1E]" />
+              <span>{languageMode === 'en' ? 'Garage' : 'Garasi'}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        injectRegister: null,
         includeAssets: [
           'icon.svg',
           'apple-touch-icon.png',
@@ -21,6 +22,7 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
+          lang: 'id',
           name: 'Kota Kendaraan Ceria 3D',
           short_name: 'Kota Truk',
           description:
@@ -53,8 +55,9 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          mode: 'production',
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,jpg,jpeg,webp,svg,woff,woff2}'],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -89,6 +92,7 @@ export default defineConfig(() => {
         devOptions: {
           enabled: true,
           type: 'module',
+          suppressWarnings: true,
         },
       }),
       // Copies src/assets into dist/ so root-relative URLs like
@@ -101,8 +105,8 @@ export default defineConfig(() => {
           if (error) {
             return;
           }
-          const distDir = path.resolve(__dirname, 'dist');
-          const srcAssets = path.resolve(__dirname, 'src/assets');
+          const distDir = path.resolve(import.meta.dirname, 'dist');
+          const srcAssets = path.resolve(import.meta.dirname, 'src/assets');
           const distAssets = path.resolve(distDir, 'src/assets');
           if (fs.existsSync(distDir) && fs.existsSync(srcAssets)) {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
@@ -112,7 +116,30 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 900,
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'three-vendor',
+                test: /node_modules[\\/]three/,
+              },
+              {
+                name: 'react-vendor',
+                test: /node_modules[\\/](react|react-dom|scheduler)/,
+              },
+              {
+                name: 'ui-vendor',
+                test: /node_modules[\\/](lucide-react|motion)/,
+              },
+            ],
+          },
+        },
       },
     },
     server: {

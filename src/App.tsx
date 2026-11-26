@@ -3,6 +3,7 @@ import { Megaphone, Volume2 } from 'lucide-react';
 import {
   VEHICLE_MAP,
   type AgeMode,
+  type LanguageMode,
   type MissionSnapshot,
   type VehicleId,
   type ViewMode,
@@ -12,6 +13,8 @@ import { GameEngine } from './three/GameEngine';
 import { TopBar } from './components/TopBar';
 import { BottomDock } from './components/BottomDock';
 import { CelebrationModal } from './components/CelebrationModal';
+import { StickerBookModal } from './components/StickerBookModal';
+import { SettingsModal } from './components/SettingsModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { LandscapeGuard } from './components/LandscapeGuard';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -28,24 +31,51 @@ const DEFAULT_STARS: Record<VehicleId, number> = {
   sampah: 0,
 };
 
+function parseLanguageMode(val: unknown): LanguageMode {
+  if (val === 'id' || val === 'en' || val === 'bilingual') return val;
+  return 'bilingual';
+}
+
 function loadSavedState(): {
   ageMode: AgeMode;
-  soundEnabled: boolean;
+  sfxEnabled: boolean;
+  musicEnabled: boolean;
+  languageMode: LanguageMode;
   starsByTruck: Record<VehicleId, number>;
 } {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return { ageMode: 'toddler', soundEnabled: true, starsByTruck: { ...DEFAULT_STARS } };
+      return {
+        ageMode: 'toddler',
+        sfxEnabled: true,
+        musicEnabled: true,
+        languageMode: 'bilingual',
+        starsByTruck: { ...DEFAULT_STARS },
+      };
     }
     const parsed = JSON.parse(raw);
+    const savedSfx =
+      typeof parsed.sfxEnabled === 'boolean'
+        ? parsed.sfxEnabled
+        : typeof parsed.soundEnabled === 'boolean'
+          ? parsed.soundEnabled
+          : true;
     return {
       ageMode: parsed.ageMode === 'preschool' ? 'preschool' : 'toddler',
-      soundEnabled: typeof parsed.soundEnabled === 'boolean' ? parsed.soundEnabled : true,
+      sfxEnabled: savedSfx,
+      musicEnabled: typeof parsed.musicEnabled === 'boolean' ? parsed.musicEnabled : true,
+      languageMode: parseLanguageMode(parsed.languageMode),
       starsByTruck: { ...DEFAULT_STARS, ...(parsed.starsByTruck || {}) },
     };
   } catch {
-    return { ageMode: 'toddler', soundEnabled: true, starsByTruck: { ...DEFAULT_STARS } };
+    return {
+      ageMode: 'toddler',
+      sfxEnabled: true,
+      musicEnabled: true,
+      languageMode: 'bilingual',
+      starsByTruck: { ...DEFAULT_STARS },
+    };
   }
 }
 
@@ -54,10 +84,14 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>('GARAGE');
   const [selectedTruck, setSelectedTruck] = useState<VehicleId | null>(null);
   const [ageMode, setAgeMode] = useState<AgeMode>(initial.ageMode);
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(initial.soundEnabled);
+  const [sfxEnabled, setSfxEnabled] = useState<boolean>(initial.sfxEnabled);
+  const [musicEnabled, setMusicEnabled] = useState<boolean>(initial.musicEnabled);
+  const [languageMode, setLanguageMode] = useState<LanguageMode>(initial.languageMode);
   const [starsByTruck, setStarsByTruck] = useState<Record<VehicleId, number>>(initial.starsByTruck);
   const [mission, setMission] = useState<MissionSnapshot | null>(null);
   const [celebratingTruck, setCelebratingTruck] = useState<VehicleId | null>(null);
+  const [stickerBookOpen, setStickerBookOpen] = useState<boolean>(false);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(false);
   const [contextLost, setContextLost] = useState<boolean>(false);
   const [engineReady, setEngineReady] = useState<boolean>(false);
@@ -70,9 +104,6 @@ export default function App() {
   const engineRef = useRef<GameEngine | null>(null);
   const ageModeRef = useRef<AgeMode>(ageMode);
   ageModeRef.current = ageMode;
-
-  const selectedTruckRef = useRef<VehicleId | null>(selectedTruck);
-  selectedTruckRef.current = selectedTruck;
 
   // Smooth staged progress animation up to 100% once Three.js engine signals ready
   useEffect(() => {
@@ -87,18 +118,35 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [engineReady]);
 
-  // Persist user preferences & stars
+  // Persist user preferences & stars and sync audio/language engine
   useEffect(() => {
-    soundEngine.setEnabled(soundEnabled);
+    soundEngine.setSfxEnabled(sfxEnabled);
+    soundEngine.setMusicEnabled(musicEnabled);
+    soundEngine.setLanguageMode(languageMode);
     try {
       window.localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ ageMode, soundEnabled, starsByTruck }),
+        JSON.stringify({ ageMode, sfxEnabled, musicEnabled, languageMode, starsByTruck }),
       );
     } catch {
       // Ignore storage quota issues
     }
-  }, [ageMode, soundEnabled, starsByTruck]);
+  }, [ageMode, sfxEnabled, musicEnabled, languageMode, starsByTruck]);
+
+  // Begin chill-happy theme song on the very first interaction on the start screen (autoplay-policy safe)
+  useEffect(() => {
+    if (gameStarted || !musicEnabled) return;
+    const triggerStartTheme = () => {
+      soundEngine.unlock();
+      soundEngine.startThemeMusic();
+    };
+    window.addEventListener('pointerdown', triggerStartTheme, { once: true });
+    window.addEventListener('keydown', triggerStartTheme, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', triggerStartTheme);
+      window.removeEventListener('keydown', triggerStartTheme);
+    };
+  }, [gameStarted, musicEnabled]);
 
   const startVehicleMission = useCallback((vehicleId: VehicleId, modeOverride?: AgeMode) => {
     soundEngine.unlock();
@@ -106,6 +154,8 @@ export default function App() {
     setSelectedTruck(vehicleId);
     setViewMode('MISSION');
     setCelebratingTruck(null);
+    setStickerBookOpen(false);
+    setSettingsOpen(false);
     setDockCollapsed(false);
     engineRef.current?.startMission(vehicleId, activeAge);
   }, []);
@@ -126,6 +176,7 @@ export default function App() {
 
   const handleStartGame = useCallback(() => {
     soundEngine.unlock();
+    soundEngine.startThemeMusic();
     soundEngine.playSuccessChime();
     const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     void lockLandscape(isTouchDevice);
@@ -167,31 +218,34 @@ export default function App() {
     engineRef.current = engine;
 
     return () => {
+      soundEngine.stopThemeMusic();
       soundEngine.stopSpeech();
       engine.dispose();
       engineRef.current = null;
     };
   }, [startVehicleMission]);
 
-  // Keyboard shortcuts (H to collapse HUD, arrows/space for Crane)
+  // Global keyboard shortcuts (Escape to close modals, H to collapse HUD)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!gameStarted) return;
-      if (e.key === 'h' || e.key === 'H') {
-        setDockCollapsed((c) => !c);
-      } else if (selectedTruckRef.current === 'crane') {
-        if (e.key === 'ArrowLeft') {
-          engineRef.current?.dispatchMissionAction('CRANE_MOVE', -1);
-        } else if (e.key === 'ArrowRight') {
-          engineRef.current?.dispatchMissionAction('CRANE_MOVE', 1);
-        } else if (e.key === ' ' || e.key === 'Enter') {
-          engineRef.current?.dispatchMissionAction('CRANE_DROP');
+      if (e.key === 'Escape') {
+        if (settingsOpen) {
+          setSettingsOpen(false);
+          return;
         }
+        if (stickerBookOpen) {
+          setStickerBookOpen(false);
+          return;
+        }
+      }
+      if (!gameStarted) return;
+      if ((e.key === 'h' || e.key === 'H') && !stickerBookOpen && !settingsOpen && !celebratingTruck) {
+        setDockCollapsed((c) => !c);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [gameStarted]);
+  }, [gameStarted, stickerBookOpen, settingsOpen, celebratingTruck]);
 
   const handleChangeAgeMode = (nextMode: AgeMode) => {
     soundEngine.unlock();
@@ -206,14 +260,44 @@ export default function App() {
     }
   };
 
-  const handleToggleSound = () => {
-    const next = !soundEnabled;
-    setSoundEnabled(next);
-    soundEngine.setEnabled(next);
+  const handleToggleSfx = () => {
+    const next = !sfxEnabled;
+    setSfxEnabled(next);
+    soundEngine.setSfxEnabled(next);
     if (next) {
       soundEngine.unlock();
       soundEngine.playPop();
     }
+  };
+
+  const handleToggleMusic = () => {
+    const next = !musicEnabled;
+    setMusicEnabled(next);
+    soundEngine.setMusicEnabled(next);
+    if (next) {
+      soundEngine.unlock();
+      soundEngine.startThemeMusic();
+    }
+  };
+
+  const handleChangeLanguage = (nextLang: LanguageMode) => {
+    soundEngine.unlock();
+    setLanguageMode(nextLang);
+    soundEngine.setLanguageMode(nextLang);
+    soundEngine.playPop();
+    if (nextLang === 'id') {
+      soundEngine.speakBilingual('Bahasa Indonesia aktif!');
+    } else if (nextLang === 'en') {
+      soundEngine.speakBilingual('English language active!', 'English language active!');
+    } else {
+      soundEngine.speakBilingual('Bahasa Indonesia dan Inggris aktif!', 'Bilingual mode active!');
+    }
+  };
+
+  const handleOpenSettings = () => {
+    soundEngine.unlock();
+    soundEngine.playPop();
+    setSettingsOpen(true);
   };
 
   const handleHonkTruck = (id: VehicleId) => {
@@ -236,6 +320,12 @@ export default function App() {
   const totalStars = Object.values(starsByTruck).reduce((sum, n) => sum + n, 0);
   const currentVehicle = selectedTruck ? VEHICLE_MAP[selectedTruck] : null;
 
+  const garagePromptId = 'Pilih truk 3D kesukaanmu untuk mulai belajar dan bermain!';
+  const garagePromptEn = 'Tap any 3D truck or pick from the dock below to play!';
+  const activePromptId = viewMode === 'GARAGE' ? garagePromptId : mission?.promptId || '';
+  const activePromptEn = viewMode === 'GARAGE' ? garagePromptEn : mission?.promptEn || '';
+  const primaryPromptText = languageMode === 'en' ? activePromptEn : activePromptId;
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#D9F0FF]">
       {/* Dedicated Isolated WebGL Canvas Container */}
@@ -247,13 +337,15 @@ export default function App() {
 
       {/* Graceful WebGL Context Fallback */}
       {contextLost && (
-        <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-sky-100 p-6 text-center">
-          <div className="max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-md">
-            <h2 className="font-display text-xl font-extrabold text-slate-900">
-              Menyiapkan Dunia 3D...
+        <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-[#F3E7D1] p-6 text-center">
+          <div className="storybook-paper max-w-sm rounded-2xl p-6">
+            <h2 className="font-display text-xl font-extrabold text-[#2D1F14]">
+              {languageMode === 'en' ? 'Preparing 3D World...' : 'Menyiapkan Dunia 3D...'}
             </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Layar 3D sedang dipulihkan secara otomatis. Silakan tunggu sebentar atau muat ulang halaman.
+            <p className="mt-2 text-sm font-medium text-[#5A422D]">
+              {languageMode === 'en'
+                ? 'The 3D viewport is recovering automatically. Please wait a moment or reload the page.'
+                : 'Layar 3D sedang dipulihkan secara otomatis. Silakan tunggu sebentar atau muat ulang halaman.'}
             </p>
           </div>
         </div>
@@ -266,49 +358,58 @@ export default function App() {
             <TopBar
               viewMode={viewMode}
               ageMode={ageMode}
-              soundEnabled={soundEnabled}
+              languageMode={languageMode}
               totalStars={totalStars}
               onBackToGarage={handleBackToGarage}
               onChangeAgeMode={handleChangeAgeMode}
-              onToggleSound={handleToggleSound}
+              onOpenStickerBook={() => {
+                soundEngine.unlock();
+                soundEngine.playPop();
+                setStickerBookOpen(true);
+              }}
+              onOpenSettings={handleOpenSettings}
             />
 
-            {/* Compact Bilingual Voice & Prompt Banner (Sits neatly in sky above 3D trucks) */}
-            <div className="mt-3 flex justify-center px-3">
-              <div className="pointer-events-auto flex max-w-[820px] items-center gap-3 rounded-2xl border border-slate-200 bg-white/95 px-4 py-2.5 shadow-sm">
+            {/* Compact Storybook Prompt Banner (Sits neatly in sky above 3D trucks) */}
+            <div className="compact-prompt-wrap mt-3 flex justify-center px-3">
+              <div className="compact-prompt-card storybook-paper pointer-events-auto flex max-w-[820px] items-center gap-3 rounded-2xl px-4 py-2.5">
                 <button
                   type="button"
                   onClick={handleRepeatVoice}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white shadow-sm transition-transform active:scale-95 hover:bg-sky-600 cursor-pointer"
-                  title="Dengar suara lagi"
-                  aria-label="Dengar suara instruksi lagi"
+                  className="btn-tactile flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-[#0284C7] text-white cursor-pointer"
+                  title={languageMode === 'en' ? 'Hear voice again' : 'Dengar suara lagi'}
+                  aria-label={languageMode === 'en' ? 'Repeat voice instruction' : 'Dengar suara instruksi lagi'}
                 >
                   <Volume2 className="h-5 w-5" />
                 </button>
 
                 <div className="min-w-0 flex-1">
-                  <p className="font-display text-sm font-extrabold text-slate-900 sm:text-base leading-snug">
-                    {viewMode === 'GARAGE'
-                      ? 'Pilih truk 3D kesukaanmu untuk mulai belajar dan bermain!'
-                      : mission?.promptId || ''}
+                  <p className="font-display text-sm font-extrabold text-[#2D1F14] sm:text-base leading-snug truncate sm:whitespace-normal">
+                    {primaryPromptText}
                   </p>
-                  <p className="text-xs font-semibold text-slate-500 leading-snug">
-                    {viewMode === 'GARAGE'
-                      ? 'Tap any 3D truck or pick from the dock below to play!'
-                      : mission?.promptEn || ''}
-                  </p>
+                  {languageMode === 'bilingual' && (
+                    <p className="compact-prompt-sub text-xs font-semibold text-[#68503B] leading-snug">
+                      {activePromptEn}
+                    </p>
+                  )}
                 </div>
 
                 {viewMode === 'MISSION' && currentVehicle && (
                   <button
                     type="button"
                     onClick={() => handleHonkTruck(currentVehicle.id)}
-                    className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl px-3.5 text-xs font-extrabold text-white transition-transform active:scale-95 whitespace-nowrap cursor-pointer"
+                    className="btn-tactile flex h-11 shrink-0 items-center gap-1.5 rounded-xl px-3.5 text-xs font-extrabold text-white whitespace-nowrap cursor-pointer"
                     style={{ backgroundColor: currentVehicle.accentHex }}
-                    aria-label={`Bunyikan klakson ${currentVehicle.nameId}`}
+                    aria-label={
+                      languageMode === 'en'
+                        ? `Honk ${currentVehicle.nameEn}`
+                        : `Bunyikan klakson ${currentVehicle.nameId}`
+                    }
                   >
                     <Megaphone className="h-4 w-4" />
-                    <span className="hidden sm:inline">Klakson</span>
+                    <span className="hidden sm:inline">
+                      {languageMode === 'en' ? 'Honk' : 'Klakson'}
+                    </span>
                   </button>
                 )}
               </div>
@@ -319,7 +420,9 @@ export default function App() {
           <BottomDock
             viewMode={viewMode}
             ageMode={ageMode}
+            languageMode={languageMode}
             collapsed={dockCollapsed}
+            modalOpen={Boolean(celebratingTruck) || stickerBookOpen || settingsOpen}
             starsByTruck={starsByTruck}
             mission={mission}
             onToggleCollapse={() => setDockCollapsed((c) => !c)}
@@ -331,12 +434,28 @@ export default function App() {
             }}
           />
 
-          {/* Star Celebration Modal */}
+          {/* Star Celebration Modal (with Next Truck shortcut) */}
           {celebratingTruck && (
             <CelebrationModal
               vehicleId={celebratingTruck}
+              languageMode={languageMode}
               onPlayAgain={() => startVehicleMission(celebratingTruck)}
+              onNextTruck={(nextId) => startVehicleMission(nextId)}
               onBackToGarage={handleBackToGarage}
+            />
+          )}
+
+          {/* Trophy & Sticker Book Modal */}
+          {stickerBookOpen && (
+            <StickerBookModal
+              starsByTruck={starsByTruck}
+              languageMode={languageMode}
+              onClose={() => {
+                soundEngine.playPop();
+                setStickerBookOpen(false);
+              }}
+              onPlayTruck={(id) => startVehicleMission(id)}
+              onHonkTruck={handleHonkTruck}
             />
           )}
         </>
@@ -347,16 +466,34 @@ export default function App() {
         <LoadingScreen
           progress={loadProgress}
           engineReady={engineReady}
+          languageMode={languageMode}
           onStartGame={handleStartGame}
         />
       )}
 
+      {/* Settings Modal (Music, Sound FX, Language — accessible from Start Screen & TopBar) */}
+      {settingsOpen && (
+        <SettingsModal
+          musicEnabled={musicEnabled}
+          sfxEnabled={sfxEnabled}
+          languageMode={languageMode}
+          onToggleMusic={handleToggleMusic}
+          onToggleSfx={handleToggleSfx}
+          onChangeLanguage={handleChangeLanguage}
+          onClose={() => {
+            soundEngine.playPop();
+            setSettingsOpen(false);
+          }}
+        />
+      )}
+
       {/* Offline Status Banner */}
-      <OfflineIndicator />
+      <OfflineIndicator languageMode={languageMode} />
 
       {/* Landscape Orientation Lock Guard */}
       <LandscapeGuard
         visible={isPortrait}
+        languageMode={languageMode}
         onLockLandscape={() => void lockLandscape(true)}
       />
     </div>

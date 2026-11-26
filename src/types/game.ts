@@ -2,7 +2,16 @@ export type VehicleId = 'molen' | 'angkut' | 'tangki' | 'crane' | 'pemadam' | 's
 
 export type AgeMode = 'toddler' | 'preschool';
 
+export type LanguageMode = 'bilingual' | 'id' | 'en';
+
 export type ViewMode = 'GARAGE' | 'MISSION';
+
+/** Return localized string for single-slot UI labels */
+export function pickLang(lang: LanguageMode, idText: string, enText: string, sep = ' · '): string {
+  if (lang === 'id') return idText;
+  if (lang === 'en') return enText;
+  return `${idText}${sep}${enText}`;
+}
 
 export interface VehicleConfig {
   id: VehicleId;
@@ -131,6 +140,20 @@ export function mixTwoColors(a: ColorOption['id'], b: ColorOption['id']): ColorO
   return ALL_COLORS[a];
 }
 
+export type MolenBlueprintId = 'house' | 'tower' | 'bridge';
+
+export interface MolenBlueprintOption {
+  id: MolenBlueprintId;
+  nameId: string;
+  nameEn: string;
+}
+
+export const MOLEN_BLUEPRINTS: MolenBlueprintOption[] = [
+  { id: 'house', nameId: 'Rumah', nameEn: 'House' },
+  { id: 'tower', nameId: 'Menara', nameEn: 'Tower' },
+  { id: 'bridge', nameId: 'Jembatan', nameEn: 'Bridge' },
+];
+
 export interface NumberWord {
   value: number;
   id: string;
@@ -144,6 +167,10 @@ export const NUMBER_WORDS: Record<number, NumberWord> = {
   4: { value: 4, id: 'Empat', en: 'Four' },
   5: { value: 5, id: 'Lima', en: 'Five' },
   6: { value: 6, id: 'Enam', en: 'Six' },
+  7: { value: 7, id: 'Tujuh', en: 'Seven' },
+  8: { value: 8, id: 'Delapan', en: 'Eight' },
+  9: { value: 9, id: 'Sembilan', en: 'Nine' },
+  10: { value: 10, id: 'Sepuluh', en: 'Ten' },
 };
 
 export type CargoTypeId = 'apple' | 'wood' | 'box' | 'brick';
@@ -182,16 +209,28 @@ export const LETTERS_PRESCHOOL: LetterEntry[] = [
   { letter: 'B', wordId: 'Bola', wordEn: 'Ball' },
   { letter: 'C', wordId: 'Ceri', wordEn: 'Car' },
   { letter: 'D', wordId: 'Daun', wordEn: 'Duck' },
+  { letter: 'E', wordId: 'Elang', wordEn: 'Elephant' },
   { letter: 'F', wordId: 'Foto', wordEn: 'Fire' },
   { letter: 'G', wordId: 'Gajah', wordEn: 'Giraffe' },
   { letter: 'H', wordId: 'Hujan', wordEn: 'House' },
+  { letter: 'I', wordId: 'Ikan', wordEn: 'Igloo' },
+  { letter: 'J', wordId: 'Jeruk', wordEn: 'Juice' },
   { letter: 'K', wordId: 'Kapal', wordEn: 'Kite' },
   { letter: 'L', wordId: 'Lampu', wordEn: 'Lion' },
   { letter: 'M', wordId: 'Mobil', wordEn: 'Moon' },
+  { letter: 'N', wordId: 'Nanas', wordEn: 'Nest' },
+  { letter: 'O', wordId: 'Obat', wordEn: 'Orange' },
   { letter: 'P', wordId: 'Pohon', wordEn: 'Plane' },
+  { letter: 'Q', wordId: 'Quilt', wordEn: 'Queen' },
   { letter: 'R', wordId: 'Roda', wordEn: 'Rocket' },
   { letter: 'S', wordId: 'Surya', wordEn: 'Sun' },
   { letter: 'T', wordId: 'Truk', wordEn: 'Truck' },
+  { letter: 'U', wordId: 'Ular', wordEn: 'Umbrella' },
+  { letter: 'V', wordId: 'Vas', wordEn: 'Van' },
+  { letter: 'W', wordId: 'Wortel', wordEn: 'Whale' },
+  { letter: 'X', wordId: 'Xilofon', wordEn: 'Xylophone' },
+  { letter: 'Y', wordId: 'Yoyo', wordEn: 'Yacht' },
+  { letter: 'Z', wordId: 'Zebra', wordEn: 'Zebra' },
 ];
 
 export type WasteCategory = 'organic' | 'non-organic';
@@ -234,6 +273,7 @@ export interface MissionSnapshot {
   // Molen
   selectedColors?: ColorOption['id'][];
   mixedColor?: ColorOption | null;
+  molenBlueprint?: MolenBlueprintId;
   structureProgress?: number;
   // Angkut
   cargoType?: CargoTypeId;
@@ -244,6 +284,7 @@ export interface MissionSnapshot {
   pipes?: PipeTileState[];
   pipeCols?: number;
   pipeRows?: number;
+  pipeTemplateId?: number;
   tankFill?: number;
   // Crane
   craneCountTarget?: number;
@@ -266,6 +307,7 @@ export interface MissionSnapshot {
   wasteCountCategory?: WasteCategory;
   wasteCountChoices?: number[];
   // General
+  hintKey?: string | null;
   wrongFeedbackKey?: number;
   completed?: boolean;
 }
