@@ -6,6 +6,7 @@ import {
   VEHICLE_MAP,
   type AgeMode,
   type MissionSnapshot,
+  type MissionVariant,
   type VehicleId,
 } from '../types/game';
 import { soundEngine } from '../audio/soundEngine';
@@ -16,24 +17,114 @@ import { createMissionController, type ActiveMissionController } from './mission
 
 export interface EngineCallbacks {
   onSelectTruckFrom3D: (vehicleId: VehicleId) => void;
+  onMissionStarted?: (vehicleId: VehicleId, missionVariant: MissionVariant) => void;
   onMissionSnapshot: (snap: MissionSnapshot) => void;
   onCelebrate: (vehicleId: VehicleId) => void;
   onContextLost: (lost: boolean) => void;
   onReady?: () => void;
 }
 
-const GARAGE_CAM_POS = new THREE.Vector3(0, 7.6, 13.8);
-const GARAGE_CAM_TARGET = new THREE.Vector3(0, 1.2, -3.4);
+const GARAGE_CAM_POS = new THREE.Vector3(0, 11.2, 18.8);
+const GARAGE_CAM_TARGET = new THREE.Vector3(0, 1.4, -7.2);
+
+interface MissionStartPreset {
+  pos: [number, number, number];
+  rotY: number;
+  camPos: [number, number, number];
+  camTarget: [number, number, number];
+  /** Intermediate roundabout waypoints (XZ) routing cleanly around the central fountain at (0, -2.6) */
+  midPoints: [number, number][];
+}
+
+// Exact mission start positions, rotations (0 = facing +X along boulevard z = 3.2), and camera presets
+const MISSION_START_PRESETS: Record<VehicleId, MissionStartPreset> = {
+  molen: {
+    pos: [2.2, 0, 3.2],
+    rotY: 0,
+    camPos: [0.2, 5.4, 12.2],
+    camTarget: [-0.2, 1.3, 3.2],
+    midPoints: [[-7.2, 1.4]],
+  },
+  angkut: {
+    pos: [-1.5, 0, 3.2],
+    rotY: 0,
+    camPos: [-0.2, 5.2, 11.4],
+    camTarget: [0.4, 1.2, 3.2],
+    midPoints: [[-7.0, 0.2]],
+  },
+  tangki: {
+    pos: [3.2, 0, 3.2],
+    rotY: 0,
+    camPos: [-0.2, 6.8, 11.4],
+    camTarget: [-0.2, 1.0, 3.0],
+    midPoints: [[-6.2, -1.2], [-3.8, 2.6]],
+  },
+  crane: {
+    pos: [2.4, 0, 3.2],
+    rotY: 0,
+    camPos: [0.0, 5.8, 12.2],
+    camTarget: [-0.3, 1.8, 3.2],
+    midPoints: [[-6.0, -4.4], [-4.8, 2.2]],
+  },
+  ekskavator: {
+    pos: [-2.5, 0, 3.2],
+    rotY: 0,
+    camPos: [0.1, 6.2, 11.8],
+    camTarget: [0.3, 1.0, 2.3],
+    midPoints: [[-3.6, -8.0], [-7.2, -1.2]],
+  },
+  pemadam: {
+    pos: [-5.8, 0, 3.2],
+    rotY: 0,
+    camPos: [0.4, 5.4, 12.6],
+    camTarget: [0.4, 1.9, 1.5],
+    midPoints: [[-0.6, -8.5], [-8.4, -2.0]],
+  },
+  sampah: {
+    pos: [3.1, 0, 3.2],
+    rotY: 0,
+    camPos: [-0.3, 5.8, 12.2],
+    camTarget: [-0.2, 1.1, 2.5],
+    midPoints: [[2.2, -8.6], [-6.2, -3.4], [-4.2, 2.4]],
+  },
+  bus: {
+    pos: [-5.4, 0, 3.2],
+    rotY: 0,
+    camPos: [-0.2, 5.6, 12.6],
+    camTarget: [0.2, 1.4, 2.5],
+    midPoints: [[8.2, -6.4], [-0.8, -8.5], [-8.8, -1.8]],
+  },
+};
 
 // Pre-allocated scratch helpers (zero GC in render loop)
 const _pointerNdc = new THREE.Vector2();
 const _confettiDummy = new THREE.Object3D();
+const _launchPos = new THREE.Vector3();
+const _launchTan = new THREE.Vector3();
+const _followCamPos = new THREE.Vector3();
+const _followCamTarget = new THREE.Vector3();
 
 interface ConfettiPiece {
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   rot: THREE.Euler;
   rotVel: THREE.Vector3;
+}
+
+interface LaunchState {
+  vehicleId: VehicleId;
+  ageMode: AgeMode;
+  missionVariant: MissionVariant;
+  elapsed: number;
+  driveDuration: number;
+  pauseDuration: number;
+  arrivedAtStart: boolean;
+  curve: THREE.CatmullRomCurve3;
+  endPos: THREE.Vector3;
+  endRotY: number;
+  missionCamPos: THREE.Vector3;
+  missionCamTarget: THREE.Vector3;
+  prevPos: THREE.Vector3;
 }
 
 export class GameEngine {
@@ -52,7 +143,8 @@ export class GameEngine {
   private callbacks: EngineCallbacks;
 
   private activeMission: ActiveMissionController | null = null;
-  private mode: 'GARAGE' | 'MISSION' = 'GARAGE';
+  private mode: 'GARAGE' | 'LAUNCHING' | 'MISSION' = 'GARAGE';
+  private launchState: LaunchState | null = null;
   private desiredCamPos = GARAGE_CAM_POS.clone();
   private desiredCamTarget = GARAGE_CAM_TARGET.clone();
   private camTransitionActive = false;
@@ -129,7 +221,7 @@ export class GameEngine {
     this.controls.dampingFactor = 0.06;
     this.controls.enablePan = false;
     this.controls.minDistance = 7;
-    this.controls.maxDistance = 24;
+    this.controls.maxDistance = 36;
     this.controls.minPolarAngle = 0.25;
     this.controls.maxPolarAngle = Math.PI / 2.2;
     this.controls.addEventListener('start', () => {
@@ -141,14 +233,15 @@ export class GameEngine {
     this.timer.connect(document);
     this.raycaster = new THREE.Raycaster();
 
-    // Build sunlit 3D storybook town diorama
+    // Build sunlit 3D storybook town diorama with 8 open-archway truck garage houses
     this.world = buildStorybookWorld(this.scene, this.maxAnisotropy, this.isSoftwareGl);
 
-    // Build all 6 composite 3D trucks parked in the sunny town plaza
+    // Build all 8 composite 3D trucks parked snugly inside their own storybook garage houses
     for (const cfg of VEHICLES) {
       const rig = buildTruck(cfg.id, this.maxAnisotropy);
       rig.root.position.set(...cfg.garagePos);
       rig.root.rotation.y = cfg.garageRotY;
+      this.applyGarageParkedPose(rig);
       this.scene.add(rig.root);
       this.trucks.set(cfg.id, rig);
       this.truckBounce.set(cfg.id, 0);
@@ -296,15 +389,15 @@ export class GameEngine {
 
     if (this.mode === 'GARAGE') {
       const truckRoots = Array.from(this.trucks.values()).map((t) => t.root);
-      const hits = this.raycaster.intersectObjects(truckRoots, true);
+      const garageTargets: THREE.Object3D[] = [...truckRoots, ...this.world.garageHouses];
+      const hits = this.raycaster.intersectObjects(garageTargets, true);
       if (hits.length > 0) {
         const vid = hits[0].object.userData.vehicleId as VehicleId | undefined;
         if (vid) {
-          this.honkTruck(vid);
           this.callbacks.onSelectTruckFrom3D(vid);
         }
       }
-    } else if (this.activeMission && this.activeMission.raycastTargets.length > 0) {
+    } else if (this.mode === 'MISSION' && this.activeMission && this.activeMission.raycastTargets.length > 0) {
       const hits = this.raycaster.intersectObjects(this.activeMission.raycastTargets, true);
       if (hits.length > 0) {
         this.activeMission.handleRaycastHit(hits[0].object);
@@ -332,6 +425,11 @@ export class GameEngine {
     if (rig.bedGroup) rig.bedGroup.rotation.set(0, 0, 0);
     if (rig.turretGroup) rig.turretGroup.rotation.set(0, 0, 0);
     if (rig.boomGroup) rig.boomGroup.rotation.set(0, 0, 0);
+    if (rig.armBaseGroup) rig.armBaseGroup.rotation.set(0, 0, 0);
+    if (rig.armForeGroup) rig.armForeGroup.rotation.set(0, 0, 0);
+    if (rig.bucketGroup) rig.bucketGroup.rotation.set(0, 0, 0);
+    if (rig.stopSignGroup) rig.stopSignGroup.rotation.set(0, 0, 0);
+    if (rig.busBeaconMat) rig.busBeaconMat.emissiveIntensity = 0.5;
     if (rig.chuteGroup) rig.chuteGroup.rotation.set(0, 0, 0);
     if (rig.id === 'molen' && rig.drumMaterial) {
       const oldMap = rig.drumMaterial.map;
@@ -341,8 +439,24 @@ export class GameEngine {
     }
   }
 
+  // Neatly tuck tall equipment (crane boom & excavator arm) while parked inside its garage cottage
+  private applyGarageParkedPose(rig: TruckRig): void {
+    this.resetTruckRig(rig);
+    if (rig.id === 'crane') {
+      if (rig.turretGroup) rig.turretGroup.rotation.y = Math.PI;
+      if (rig.boomGroup) rig.boomGroup.rotation.z = 0.54;
+      if (rig.cableMesh) rig.cableMesh.scale.y = 0.45;
+      if (rig.hookGroup) rig.hookGroup.position.set(-2.55, 2.1, 0);
+    } else if (rig.id === 'ekskavator') {
+      if (rig.armBaseGroup) rig.armBaseGroup.rotation.z = -0.22;
+      if (rig.armForeGroup) rig.armForeGroup.rotation.z = -0.26;
+      if (rig.bucketGroup) rig.bucketGroup.rotation.z = 0.2;
+    }
+  }
+
   public enterGarage(): void {
     this.isDraggingSpray = false;
+    this.launchState = null;
     this.clearActiveMission();
     this.mode = 'GARAGE';
     this.confettiActive = false;
@@ -353,7 +467,7 @@ export class GameEngine {
       rig.root.visible = true;
       rig.root.position.set(...cfg.garagePos);
       rig.root.rotation.set(0, cfg.garageRotY, 0);
-      this.resetTruckRig(rig);
+      this.applyGarageParkedPose(rig);
     }
 
     this.controls.enabled = true;
@@ -362,8 +476,88 @@ export class GameEngine {
     this.camTransitionActive = true;
   }
 
-  public startMission(vehicleId: VehicleId, ageMode: AgeMode): void {
+  /** Slowly drive the chosen truck out of its cottage around the village pond and stop at its exact mission start spot */
+  public launchMissionFromGarage(
+    vehicleId: VehicleId,
+    ageMode: AgeMode,
+    missionVariant: MissionVariant = 'classic',
+  ): void {
+    if (this.mode === 'LAUNCHING') return;
+    if (this.mode === 'MISSION') {
+      this.startMission(vehicleId, ageMode, missionVariant);
+      return;
+    }
+
+    const cfg = VEHICLE_MAP[vehicleId];
+    const rig = this.trucks.get(vehicleId);
+    const preset = MISSION_START_PRESETS[vehicleId];
+    if (!cfg || !rig || !preset) return;
+
+    this.mode = 'LAUNCHING';
+    this.truckBounce.set(vehicleId, 0.65);
+
+    const fx = Math.sin(cfg.houseRotY);
+    const fz = Math.cos(cfg.houseRotY);
+
+    soundEngine.playHorn(vehicleId);
+    soundEngine.playEngineRev();
+    soundEngine.speakBilingual(
+      `${cfg.nameId} melaju keluar menuju lokasi misi!`,
+      `${cfg.nameEn} is driving out to the mission!`,
+    );
+
+    // Build collision-free Catmull-Rom spline:
+    // inside cottage -> straight out open archway -> scenic roundabout around pond -> aligned boulevard approach -> exact mission start
+    const p0 = new THREE.Vector3(...cfg.garagePos);
+    const exitDist = vehicleId === 'bus' ? 3.3 : 4.2;
+    const p1 = new THREE.Vector3(
+      cfg.housePos[0] + fx * exitDist,
+      0,
+      cfg.housePos[2] + fz * exitDist,
+    );
+    const endPos = new THREE.Vector3(...preset.pos);
+    const approachPos = new THREE.Vector3(endPos.x - 2.6, 0, endPos.z);
+
+    const waypoints: THREE.Vector3[] = [p0, p1];
+    for (const [mx, mz] of preset.midPoints) {
+      waypoints.push(new THREE.Vector3(mx, 0, mz));
+    }
+    waypoints.push(approachPos, endPos);
+
+    const curve = new THREE.CatmullRomCurve3(waypoints, false, 'centripetal', 0.45);
+    const totalLen = curve.getLength();
+    // Calm, kid-friendly cruising pace (~5.4 units/sec, clamped 3.6–5.2s)
+    const driveDuration = THREE.MathUtils.clamp(totalLen / 5.4, 3.6, 5.2);
+
+    this.launchState = {
+      vehicleId,
+      ageMode,
+      missionVariant,
+      elapsed: 0,
+      driveDuration,
+      pauseDuration: 0.55,
+      arrivedAtStart: false,
+      curve,
+      endPos,
+      endRotY: preset.rotY,
+      missionCamPos: new THREE.Vector3(...preset.camPos),
+      missionCamTarget: new THREE.Vector3(...preset.camTarget),
+      prevPos: p0.clone(),
+    };
+
+    // Gently frame the cottage exit and village plaza
+    this.desiredCamPos.set(p0.x * 0.32, 8.2, 11.4);
+    this.desiredCamTarget.set(p0.x * 0.42, 1.35, p0.z * 0.5 - 1.0);
+    this.camTransitionActive = true;
+  }
+
+  public startMission(
+    vehicleId: VehicleId,
+    ageMode: AgeMode,
+    missionVariant: MissionVariant = 'classic',
+  ): void {
     this.isDraggingSpray = false;
+    this.launchState = null;
     this.clearActiveMission();
     this.mode = 'MISSION';
     this.confettiActive = false;
@@ -376,13 +570,20 @@ export class GameEngine {
 
     const activeTruck = this.trucks.get(vehicleId)!;
     this.resetTruckRig(activeTruck);
-    const ctrl = createMissionController(vehicleId, activeTruck, ageMode, this.maxAnisotropy, {
-      onSnapshot: (snap) => this.callbacks.onMissionSnapshot(snap),
-      onCelebrate: (vid) => {
-        this.launchConfetti(activeTruck.root.position);
-        this.callbacks.onCelebrate(vid);
+    const ctrl = createMissionController(
+      vehicleId,
+      activeTruck,
+      ageMode,
+      this.maxAnisotropy,
+      {
+        onSnapshot: (snap) => this.callbacks.onMissionSnapshot(snap),
+        onCelebrate: (vid) => {
+          this.launchConfetti(activeTruck.root.position);
+          this.callbacks.onCelebrate(vid);
+        },
       },
-    });
+      missionVariant,
+    );
 
     this.activeMission = ctrl;
     this.scene.add(ctrl.group);
@@ -510,13 +711,18 @@ export class GameEngine {
     }
     this.controls.update();
 
-    // Gentle lively idle animations in Garage
-    if (this.mode === 'GARAGE') {
+    // Gentle lively idle animations in Garage & smooth drive-out rollout in Launching mode
+    if (this.mode === 'GARAGE' || this.mode === 'LAUNCHING') {
+      const activeLaunch = this.mode === 'LAUNCHING' ? this.launchState : null;
       let i = 0;
       for (const [vid, rig] of this.trucks.entries()) {
+        if (activeLaunch && activeLaunch.vehicleId === vid) {
+          i += 1;
+          continue;
+        }
         const bounce = this.truckBounce.get(vid) || 0;
         if (bounce > 0.01) {
-          rig.bodyGroup.position.y = Math.sin(bounce * Math.PI) * 0.45;
+          rig.bodyGroup.position.y = Math.sin(bounce * Math.PI) * 0.38;
           this.truckBounce.set(vid, Math.max(0, bounce - dt * 2.8));
         } else {
           rig.bodyGroup.position.y = Math.sin(elapsed * 2.2 + i * 0.9) * 0.03;
@@ -524,7 +730,114 @@ export class GameEngine {
         if (rig.drumGroup) {
           rig.drumGroup.rotation.x += dt * 0.7;
         }
+        if (rig.armBaseGroup && rig.bucketGroup) {
+          rig.armBaseGroup.rotation.z = -0.22 + Math.sin(elapsed * 1.4) * 0.05;
+          rig.bucketGroup.rotation.z = 0.2 + Math.sin(elapsed * 1.4 + 0.8) * 0.08;
+        }
+        if (rig.busBeaconMat) {
+          rig.busBeaconMat.emissiveIntensity = 0.45 + Math.sin(elapsed * 4.5) * 0.25;
+        }
         i += 1;
+      }
+
+      if (activeLaunch) {
+        const rig = this.trucks.get(activeLaunch.vehicleId);
+        if (rig) {
+          activeLaunch.elapsed += dt;
+
+          if (activeLaunch.elapsed < activeLaunch.driveDuration) {
+            const u = Math.min(1, activeLaunch.elapsed / activeLaunch.driveDuration);
+            // Smootherstep ease-in-out so the truck accelerates gently and brakes smoothly at mission start
+            const s = u * u * u * (u * (6 * u - 15) + 10);
+
+            activeLaunch.curve.getPointAt(s, _launchPos);
+            activeLaunch.curve.getTangentAt(s, _launchTan);
+
+            const stepDist = _launchPos.distanceTo(activeLaunch.prevPos);
+            activeLaunch.prevPos.copy(_launchPos);
+            rig.root.position.copy(_launchPos);
+
+            if (_launchTan.lengthSq() > 0.0001) {
+              // Blend steering seamlessly onto exact mission orientation (endRotY = 0) during final straight approach
+              const rawRotY = Math.atan2(-_launchTan.z, _launchTan.x);
+              const alignBlend = THREE.MathUtils.smoothstep(s, 0.86, 0.98);
+              const deltaToEnd = Math.atan2(
+                Math.sin(activeLaunch.endRotY - rawRotY),
+                Math.cos(activeLaunch.endRotY - rawRotY),
+              );
+              const targetRotY = rawRotY + deltaToEnd * alignBlend;
+              const diff = Math.atan2(
+                Math.sin(targetRotY - rig.root.rotation.y),
+                Math.cos(targetRotY - rig.root.rotation.y),
+              );
+              rig.root.rotation.y += diff * (1 - Math.exp(-9 * dt));
+            }
+
+            // Wheel spin synced cleanly to actual distance rolled
+            rig.wheels.forEach((w) => {
+              w.rotation.z -= stepDist / 0.44;
+            });
+
+            const speedFactor = Math.min(1, stepDist / Math.max(dt, 0.001) / 4.2);
+            rig.bodyGroup.position.y = Math.abs(Math.sin(activeLaunch.elapsed * 14)) * 0.045 * speedFactor;
+            if (rig.drumGroup) {
+              rig.drumGroup.rotation.x += dt * (1.2 + speedFactor * 1.8);
+            }
+
+            // Smoothly unfold tucked garage posture (crane boom & excavator arm) before reaching mission start
+            const unfoldT = THREE.MathUtils.smoothstep(u, 0.55, 0.96);
+            if (unfoldT > 0) {
+              if (rig.id === 'crane') {
+                if (rig.turretGroup) rig.turretGroup.rotation.y = Math.PI * (1 - unfoldT);
+                if (rig.boomGroup) rig.boomGroup.rotation.z = 0.54 * (1 - unfoldT);
+                if (rig.cableMesh) rig.cableMesh.scale.y = THREE.MathUtils.lerp(0.45, 1.3, unfoldT);
+                if (rig.hookGroup) rig.hookGroup.position.y = THREE.MathUtils.lerp(2.1, 1.25, unfoldT);
+              } else if (rig.id === 'ekskavator') {
+                if (rig.armBaseGroup) rig.armBaseGroup.rotation.z = -0.22 * (1 - unfoldT);
+                if (rig.armForeGroup) rig.armForeGroup.rotation.z = -0.26 * (1 - unfoldT);
+                if (rig.bucketGroup) rig.bucketGroup.rotation.z = 0.2 * (1 - unfoldT);
+              }
+            }
+
+            // Smoothly blend camera from plaza follow-cam directly into the exact mission camera preset
+            _followCamPos.set(rig.root.position.x * 0.3, 8.0, 11.4);
+            _followCamTarget.set(
+              rig.root.position.x * 0.45,
+              1.35,
+              rig.root.position.z * 0.5 - 0.8,
+            );
+            const camBlend = THREE.MathUtils.smoothstep(u, 0.52, 0.98);
+            this.desiredCamPos.lerpVectors(_followCamPos, activeLaunch.missionCamPos, camBlend);
+            this.desiredCamTarget.lerpVectors(
+              _followCamTarget,
+              activeLaunch.missionCamTarget,
+              camBlend,
+            );
+            this.camTransitionActive = true;
+          } else {
+            // Stopped cleanly at the EXACT mission start position & orientation!
+            if (!activeLaunch.arrivedAtStart) {
+              activeLaunch.arrivedAtStart = true;
+              rig.root.position.copy(activeLaunch.endPos);
+              rig.root.rotation.set(0, activeLaunch.endRotY, 0);
+              this.desiredCamPos.copy(activeLaunch.missionCamPos);
+              this.desiredCamTarget.copy(activeLaunch.missionCamTarget);
+              this.camTransitionActive = true;
+              soundEngine.playPop();
+            }
+            const pauseElapsed = activeLaunch.elapsed - activeLaunch.driveDuration;
+            const bouncePhase = Math.min(1, pauseElapsed / 0.36);
+            rig.bodyGroup.position.y = Math.sin(bouncePhase * Math.PI) * 0.14;
+
+            if (pauseElapsed >= activeLaunch.pauseDuration) {
+              rig.bodyGroup.position.y = 0;
+              const { vehicleId, ageMode, missionVariant } = activeLaunch;
+              this.launchState = null;
+              this.startMission(vehicleId, ageMode, missionVariant);
+              this.callbacks.onMissionStarted?.(vehicleId, missionVariant);
+            }
+          }
+        }
       }
     } else if (this.activeMission) {
       this.activeMission.update(dt, elapsed);

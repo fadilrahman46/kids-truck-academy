@@ -1,10 +1,79 @@
-export type VehicleId = 'molen' | 'angkut' | 'tangki' | 'crane' | 'pemadam' | 'sampah';
+export type VehicleId =
+  | 'molen'
+  | 'angkut'
+  | 'tangki'
+  | 'crane'
+  | 'pemadam'
+  | 'sampah'
+  | 'ekskavator'
+  | 'bus';
 
 export type AgeMode = 'toddler' | 'preschool';
 
 export type LanguageMode = 'bilingual' | 'id' | 'en';
 
 export type ViewMode = 'GARAGE' | 'MISSION';
+
+export type MissionVariant = 'classic' | 'bonus';
+
+export const BONUS_ELIGIBLE_VEHICLES: VehicleId[] = [
+  'molen',
+  'angkut',
+  'tangki',
+  'crane',
+  'pemadam',
+  'sampah',
+];
+
+export function hasBonusMission(vehicleId: VehicleId): boolean {
+  return BONUS_ELIGIBLE_VEHICLES.includes(vehicleId);
+}
+
+export interface MissionVariantMeta {
+  classicId: string;
+  classicEn: string;
+  bonusId: string;
+  bonusEn: string;
+}
+
+export const MISSION_VARIANT_META: Partial<Record<VehicleId, MissionVariantMeta>> = {
+  molen: {
+    classicId: 'Bangun Kota',
+    classicEn: 'Town Build',
+    bonusId: 'Kincir Taman',
+    bonusEn: 'Windmill',
+  },
+  angkut: {
+    classicId: 'Muatan Tunggal',
+    classicEn: 'Single Cargo',
+    bonusId: 'Keranjang Panen',
+    bonusEn: 'Harvest Mix',
+  },
+  tangki: {
+    classicId: 'Isi Tangki',
+    classicEn: 'Fill Tank',
+    bonusId: 'Taman Bunga',
+    bonusEn: 'Flower Garden',
+  },
+  crane: {
+    classicId: 'Seimbangkan',
+    classicEn: 'Balance Load',
+    bonusId: 'Peti Emas',
+    bonusEn: 'Golden Stack',
+  },
+  pemadam: {
+    classicId: 'Pondok Desa',
+    classicEn: 'Village Cottage',
+    bonusId: 'Menara Lonceng',
+    bonusEn: 'Bell Tower',
+  },
+  sampah: {
+    classicId: 'Bersih Jalan',
+    classicEn: 'Street Sort',
+    bonusId: 'Piknik Taman',
+    bonusEn: 'Park Picnic',
+  },
+};
 
 /** Return localized string for single-slot UI labels */
 export function pickLang(lang: LanguageMode, idText: string, enText: string, sep = ' · '): string {
@@ -22,8 +91,39 @@ export interface VehicleConfig {
   accentHex: string;
   accentDarkHex: string;
   lightBgHex: string;
+  housePos: [number, number, number];
+  houseRotY: number;
   garagePos: [number, number, number];
   garageRotY: number;
+}
+
+// Compute each vehicle's wide crescent cottage & interior parked truck coordinates
+// so every truck rests snugly inside its open-archway house peeking out toward the plaza.
+function makeCrescentSlot(index: number): {
+  housePos: [number, number, number];
+  houseRotY: number;
+  garagePos: [number, number, number];
+  garageRotY: number;
+} {
+  // 8 cottages evenly distributed along a wide crescent ellipse from -72 deg to +72 deg
+  const t = index / 7;
+  const phi = (-72 + t * 144) * (Math.PI / 180);
+  const hx = Number((16.8 * Math.sin(phi)).toFixed(2));
+  const hz = Number((-2.0 - 12.6 * Math.cos(phi)).toFixed(2));
+  // Face each open archway gently inward toward the sunlit plaza & viewer
+  const houseRotY = Number(Math.atan2(0 - hx, 8.5 - hz).toFixed(3));
+  // Truck local +X points straight out along house local +Z when rotated by houseRotY - PI/2
+  const garageRotY = Number((houseRotY - Math.PI / 2).toFixed(3));
+  // Tuck truck inside the house bay with its cheerful front grille peeking slightly out the arch
+  const peekOffset = 0.68;
+  const gx = Number((hx + Math.sin(houseRotY) * peekOffset).toFixed(2));
+  const gz = Number((hz + Math.cos(houseRotY) * peekOffset).toFixed(2));
+  return {
+    housePos: [hx, 0, hz],
+    houseRotY,
+    garagePos: [gx, 0, gz],
+    garageRotY,
+  };
 }
 
 export const VEHICLES: VehicleConfig[] = [
@@ -36,8 +136,7 @@ export const VEHICLES: VehicleConfig[] = [
     accentHex: '#F59E0B',
     accentDarkHex: '#B45309',
     lightBgHex: '#FEF3C7',
-    garagePos: [-7.5, 0, -2.5],
-    garageRotY: 0.45,
+    ...makeCrescentSlot(0),
   },
   {
     id: 'angkut',
@@ -48,8 +147,7 @@ export const VEHICLES: VehicleConfig[] = [
     accentHex: '#2563EB',
     accentDarkHex: '#1D4ED8',
     lightBgHex: '#DBEAFE',
-    garagePos: [-4.5, 0, -5.8],
-    garageRotY: 0.22,
+    ...makeCrescentSlot(1),
   },
   {
     id: 'tangki',
@@ -60,8 +158,7 @@ export const VEHICLES: VehicleConfig[] = [
     accentHex: '#0284C7',
     accentDarkHex: '#0369A1',
     lightBgHex: '#E0F2FE',
-    garagePos: [-1.5, 0, -7.2],
-    garageRotY: 0.08,
+    ...makeCrescentSlot(2),
   },
   {
     id: 'crane',
@@ -72,8 +169,18 @@ export const VEHICLES: VehicleConfig[] = [
     accentHex: '#EAB308',
     accentDarkHex: '#A16207',
     lightBgHex: '#FEF9C3',
-    garagePos: [1.9, 0, -7.2],
-    garageRotY: -0.08,
+    ...makeCrescentSlot(3),
+  },
+  {
+    id: 'ekskavator',
+    nameId: 'Truk Ekskavator',
+    nameEn: 'Excavator',
+    topicId: 'Bentuk & Gali',
+    topicEn: 'Shapes & Dig',
+    accentHex: '#EA580C',
+    accentDarkHex: '#9A3412',
+    lightBgHex: '#FFEDD5',
+    ...makeCrescentSlot(4),
   },
   {
     id: 'pemadam',
@@ -84,8 +191,7 @@ export const VEHICLES: VehicleConfig[] = [
     accentHex: '#DC2626',
     accentDarkHex: '#991B1B',
     lightBgHex: '#FEE2E2',
-    garagePos: [5.0, 0, -5.8],
-    garageRotY: -0.25,
+    ...makeCrescentSlot(5),
   },
   {
     id: 'sampah',
@@ -96,8 +202,18 @@ export const VEHICLES: VehicleConfig[] = [
     accentHex: '#16A34A',
     accentDarkHex: '#15803D',
     lightBgHex: '#DCFCE7',
-    garagePos: [7.6, 0, -2.5],
-    garageRotY: -0.48,
+    ...makeCrescentSlot(6),
+  },
+  {
+    id: 'bus',
+    nameId: 'Bus Sekolah',
+    nameEn: 'School Bus',
+    topicId: 'Lampu & Pola',
+    topicEn: 'Traffic & Patterns',
+    accentHex: '#CA8A04',
+    accentDarkHex: '#854D0E',
+    lightBgHex: '#FEF08A',
+    ...makeCrescentSlot(7),
   },
 ];
 
@@ -140,7 +256,7 @@ export function mixTwoColors(a: ColorOption['id'], b: ColorOption['id']): ColorO
   return ALL_COLORS[a];
 }
 
-export type MolenBlueprintId = 'house' | 'tower' | 'bridge';
+export type MolenBlueprintId = 'house' | 'tower' | 'bridge' | 'windmill';
 
 export interface MolenBlueprintOption {
   id: MolenBlueprintId;
@@ -255,6 +371,64 @@ export const WASTE_CATALOG: Omit<WasteItemDef, 'uid' | 'sorted'>[] = [
   { kind: 'cardboard', category: 'non-organic', nameId: 'Kardus', nameEn: 'Cardboard Box', hex: '#D97706' },
 ];
 
+export type ShapeId = 'circle' | 'square' | 'triangle' | 'star';
+
+export interface ShapeOption {
+  id: ShapeId;
+  nameId: string;
+  nameEn: string;
+  hex: string;
+}
+
+export const SHAPE_OPTIONS: ShapeOption[] = [
+  { id: 'circle', nameId: 'Lingkaran', nameEn: 'Circle', hex: '#E15A3E' },
+  { id: 'square', nameId: 'Persegi', nameEn: 'Square', hex: '#2E7CC2' },
+  { id: 'triangle', nameId: 'Segitiga', nameEn: 'Triangle', hex: '#2F9A58' },
+  { id: 'star', nameId: 'Bintang', nameEn: 'Star', hex: '#E5A61C' },
+];
+
+export const SHAPE_MAP: Record<ShapeId, ShapeOption> = SHAPE_OPTIONS.reduce(
+  (acc, s) => {
+    acc[s.id] = s;
+    return acc;
+  },
+  {} as Record<ShapeId, ShapeOption>,
+);
+
+export type TrafficLightState = 'red' | 'yellow' | 'green';
+
+export type BusRiderColorId = 'red' | 'blue' | 'yellow' | 'green';
+
+export interface BusRiderColorOption {
+  id: BusRiderColorId;
+  nameId: string;
+  nameEn: string;
+  hex: string;
+  hatHex: string;
+}
+
+export const BUS_RIDER_COLORS: BusRiderColorOption[] = [
+  { id: 'red', nameId: 'Merah', nameEn: 'Red', hex: '#E04B3E', hatHex: '#B72F24' },
+  { id: 'blue', nameId: 'Biru', nameEn: 'Blue', hex: '#2E7BC6', hatHex: '#1D5894' },
+  { id: 'yellow', nameId: 'Kuning', nameEn: 'Yellow', hex: '#F0B928', hatHex: '#C68C0D' },
+  { id: 'green', nameId: 'Hijau', nameEn: 'Green', hex: '#38A158', hatHex: '#22723B' },
+];
+
+export const BUS_RIDER_COLOR_MAP: Record<BusRiderColorId, BusRiderColorOption> =
+  BUS_RIDER_COLORS.reduce(
+    (acc, c) => {
+      acc[c.id] = c;
+      return acc;
+    },
+    {} as Record<BusRiderColorId, BusRiderColorOption>,
+  );
+
+export interface DigMoundState {
+  index: number;
+  dug: boolean;
+  shapeId: ShapeId;
+}
+
 export interface PipeTileState {
   index: number;
   row: number;
@@ -267,6 +441,7 @@ export interface PipeTileState {
 
 export interface MissionSnapshot {
   vehicleId: VehicleId;
+  missionVariant?: MissionVariant;
   phase: string;
   promptId: string;
   promptEn: string;
@@ -274,9 +449,13 @@ export interface MissionSnapshot {
   selectedColors?: ColorOption['id'][];
   mixedColor?: ColorOption | null;
   molenBlueprint?: MolenBlueprintId;
+  molenBonusStage?: 1 | 2;
   structureProgress?: number;
   // Angkut
   cargoType?: CargoTypeId;
+  secondaryCargoType?: CargoTypeId;
+  primaryCargoCount?: number;
+  secondaryCargoCount?: number;
   loadedCount?: number;
   targetCount?: number;
   numberChoices?: number[];
@@ -286,6 +465,7 @@ export interface MissionSnapshot {
   pipeRows?: number;
   pipeTemplateId?: number;
   tankFill?: number;
+  gardenBloom?: number;
   // Crane
   craneCountTarget?: number;
   craneCountChoices?: number[];
@@ -306,6 +486,18 @@ export interface MissionSnapshot {
   nonOrganicCount?: number;
   wasteCountCategory?: WasteCategory;
   wasteCountChoices?: number[];
+  // Ekskavator (Shapes & Digging)
+  digMounds?: DigMoundState[];
+  discoveredShapes?: ShapeId[];
+  placedShapes?: ShapeId[];
+  activeShapeId?: ShapeId | null;
+  // Bus Sekolah (Traffic Lights & Patterns)
+  trafficLight?: TrafficLightState;
+  busProgress?: number;
+  patternSequence?: BusRiderColorId[];
+  patternChoices?: BusRiderColorId[];
+  ridersBoarded?: number;
+  totalRidersToBoard?: number;
   // General
   hintKey?: string | null;
   wrongFeedbackKey?: number;

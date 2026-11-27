@@ -50,6 +50,18 @@ const SKILL_META: Record<
     detailId: 'Memilah sampah organik/non-organik dan menghitung isi tong',
     detailEn: 'Sort organic vs. non-organic waste and count bin totals',
   },
+  ekskavator: {
+    skillId: 'Bentuk & Gali',
+    skillEn: 'Shapes & Digging',
+    detailId: 'Menggali batu bentuk geometri dan mencocokkannya pada cetakan',
+    detailEn: 'Dig up geometric shape stones and match them to carved sockets',
+  },
+  bus: {
+    skillId: 'Lampu Lalu Lintas & Pola',
+    skillEn: 'Traffic Lights & Patterns',
+    detailId: 'Mematuhi lampu lalu lintas dan melengkapi pola warna penumpang',
+    detailEn: 'Follow traffic light rules and complete visual color patterns',
+  },
 };
 
 function getStickerRank(stars: number): { labelId: string; labelEn: string } {
@@ -75,7 +87,7 @@ export function StickerBookModal({
       aria-modal="true"
       aria-labelledby="sticker-book-title"
     >
-      <div className="animate-pop-in storybook-paper flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl">
+      <div className="animate-pop-in storybook-paper flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl">
         {/* Carved Honey-Oak Storybook Header */}
         <div className="flex items-center justify-between gap-3 border-b-2 border-[#CFA772] bg-gradient-to-b from-[#FFF9EC] to-[#F3E3C4] px-4 py-3.5 sm:px-6">
           <div className="flex items-center gap-3 min-w-0">
@@ -91,8 +103,8 @@ export function StickerBookModal({
               </h2>
               <p className="text-xs font-semibold text-[#68503B] tabular-nums">
                 {languageMode === 'en'
-                  ? `${unlockedCount}/6 Vehicle Stickers Unlocked · ${totalStars} Total Stars`
-                  : `${unlockedCount}/6 Stiker Kendaraan Terbuka · ${totalStars} Total Bintang`}
+                  ? `${unlockedCount}/${VEHICLES.length} Vehicle Stickers Unlocked · ${totalStars} Total Stars`
+                  : `${unlockedCount}/${VEHICLES.length} Stiker Kendaraan Terbuka · ${totalStars} Total Bintang`}
               </p>
             </div>
           </div>
@@ -122,7 +134,7 @@ export function StickerBookModal({
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {VEHICLES.map((v) => {
                 const stars = starsByTruck[v.id] || 0;
                 const unlocked = stars > 0;

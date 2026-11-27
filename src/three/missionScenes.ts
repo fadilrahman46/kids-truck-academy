@@ -14,6 +14,7 @@ import {
   type ColorOption,
   type LetterEntry,
   type MissionSnapshot,
+  type MissionVariant,
   type MolenBlueprintId,
   type PipeTileState,
   type VehicleId,
@@ -33,6 +34,7 @@ import {
   getPaperBumpTexture,
 } from './textures';
 import { buildCargoProp, buildWasteProp, type TruckRig } from './trucks';
+import { createExcavatorMission, createSchoolBusMission } from './newMissionScenes';
 
 export interface MissionCallbacks {
   onSnapshot: (snap: MissionSnapshot) => void;
@@ -235,6 +237,12 @@ const MOLEN_BLUEPRINT_BLOCKS: Record<MolenBlueprintId, MolenBlockSpec[]> = {
     { pos: [0, 1.72, -0.68], size: [3.2, 0.32, 0.22], shadeOffset: -0.08 },
     { pos: [0, 1.72, 0.68], size: [3.2, 0.32, 0.22], shadeOffset: -0.08 },
   ],
+  windmill: [
+    { pos: [0, 0.55, 0], size: [1.95, 1.1, 1.75] },
+    { pos: [0, 1.52, 0], size: [1.52, 0.96, 1.42] },
+    { pos: [0, 2.42, 0], size: [1.16, 0.88, 1.12] },
+    { pos: [0, 3.35, 0], size: [1.1, 1.05, 4], shape: 'cone', shadeOffset: -0.1 },
+  ],
 };
 
 let molenBlueprintCursor = 0;
@@ -346,7 +354,16 @@ export function createMissionController(
   ageMode: AgeMode,
   maxAnisotropy: number,
   callbacks: MissionCallbacks,
+  missionVariant: MissionVariant = 'classic',
 ): ActiveMissionController {
+  if (vehicleId === 'ekskavator') {
+    return createExcavatorMission(truck, ageMode, maxAnisotropy, callbacks);
+  }
+  if (vehicleId === 'bus') {
+    return createSchoolBusMission(truck, ageMode, maxAnisotropy, callbacks);
+  }
+
+  const isBonus = missionVariant === 'bonus';
   const group = new THREE.Group();
   const raycastTargets: THREE.Object3D[] = [];
   const timeouts: number[] = [];
@@ -452,22 +469,52 @@ export function createMissionController(
     buildGroup.position.set(-2.6, 0.16, 3.2);
     group.add(buildGroup);
 
-    let blueprintId: MolenBlueprintId =
-      MOLEN_BLUEPRINTS[molenBlueprintCursor % MOLEN_BLUEPRINTS.length].id;
-    molenBlueprintCursor += 1;
+    let blueprintId: MolenBlueprintId = isBonus
+      ? 'windmill'
+      : MOLEN_BLUEPRINTS[molenBlueprintCursor % MOLEN_BLUEPRINTS.length].id;
+    if (!isBonus) molenBlueprintCursor += 1;
 
     const builtBlocks: { mesh: THREE.Mesh; targetY: number; shadeOffset: number }[] = [];
     const blockMats: THREE.MeshStandardMaterial[] = [];
     const neutralBrickTex = createBrickTexture('#EBE4D8', maxAnisotropy);
     const neutralGouacheTex = createGouachePaintTexture('#F4EFE6', maxAnisotropy);
 
+    // Bonus Windmill spinning sails rotor (attached to front of windmill tower)
+    const windmillSailPivot = new THREE.Group();
+    windmillSailPivot.position.set(0, 2.45, 0.72);
+    windmillSailPivot.visible = false;
+    const sailMat = new THREE.MeshStandardMaterial({
+      map: neutralGouacheTex,
+      color: '#F59E0B',
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.56,
+    });
+    const sailWoodMat = new THREE.MeshStandardMaterial({ color: '#6E4726', roughness: 0.82 });
+    const sailHub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.28, 12), sailWoodMat);
+    sailHub.rotation.x = Math.PI / 2;
+    windmillSailPivot.add(sailHub);
+    for (let i = 0; i < 4; i++) {
+      const armPivot = new THREE.Group();
+      armPivot.rotation.z = (i * Math.PI) / 2;
+      const spar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.5, 0.08), sailWoodMat);
+      spar.position.y = 0.78;
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.46, 1.15, 0.06), sailMat);
+      blade.position.set(0.24, 0.92, 0.02);
+      blade.castShadow = true;
+      armPivot.add(spar, blade);
+      windmillSailPivot.add(armPivot);
+    }
+
     const rebuildStructureMeshes = (bp: MolenBlueprintId) => {
       while (buildGroup.children.length > 0) {
         const child = buildGroup.children[0] as THREE.Mesh;
         buildGroup.remove(child);
-        child.geometry?.dispose();
-        if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
-        else (child.material as THREE.Material)?.dispose();
+        if (child !== (windmillSailPivot as unknown as THREE.Mesh)) {
+          child.geometry?.dispose();
+          if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+          else (child.material as THREE.Material)?.dispose();
+        }
       }
       builtBlocks.length = 0;
       blockMats.length = 0;
@@ -496,6 +543,12 @@ export function createMissionController(
         buildGroup.add(mesh);
         builtBlocks.push({ mesh, targetY: b.pos[1], shadeOffset: b.shadeOffset ?? 0 });
       });
+
+      if (bp === 'windmill') {
+        windmillSailPivot.visible = false;
+        windmillSailPivot.scale.set(0.01, 0.01, 0.01);
+        buildGroup.add(windmillSailPivot);
+      }
     };
     rebuildStructureMeshes(blueprintId);
 
@@ -503,19 +556,29 @@ export function createMissionController(
     let selectedColors: ColorOption['id'][] = [];
     let mixedColor: ColorOption | null = null;
     let phase: 'PICK' | 'SPINNING' | 'BUILDING' | 'DONE' = 'PICK';
+    let molenBonusStage: 1 | 2 = 1;
     let spinTimer = 0;
     let buildProgress = 0;
 
-    const getBlueprintMeta = () => MOLEN_BLUEPRINTS.find((b) => b.id === blueprintId)!;
+    const getBlueprintMeta = () =>
+      blueprintId === 'windmill'
+        ? { id: 'windmill' as MolenBlueprintId, nameId: 'Kincir Taman', nameEn: 'Garden Windmill' }
+        : MOLEN_BLUEPRINTS.find((b) => b.id === blueprintId)!;
 
     const emit = () => {
       const bp = getBlueprintMeta();
-      let promptId =
-        ageMode === 'toddler'
+      let promptId = isBonus
+        ? molenBonusStage === 1
+          ? 'Misi 2: Pilih cat untuk menara Kincir Taman!'
+          : 'Langkah 2: Pilih warna baling-baling Kincir Taman!'
+        : ageMode === 'toddler'
           ? `Pilih 1 warna cat untuk membangun ${bp.nameId}!`
           : `Pilih 2 warna untuk dicampur dan membangun ${bp.nameId}!`;
-      let promptEn =
-        ageMode === 'toddler'
+      let promptEn = isBonus
+        ? molenBonusStage === 1
+          ? 'Bonus Mission: Pick paint for the Garden Windmill tower!'
+          : 'Step 2: Pick a color for the spinning Windmill sails!'
+        : ageMode === 'toddler'
           ? `Pick 1 paint color to build the ${bp.nameEn}!`
           : `Pick 2 colors to mix and build the ${bp.nameEn}!`;
 
@@ -526,21 +589,29 @@ export function createMissionController(
         promptId = 'Molen sedang berputar mencampur warna...';
         promptEn = 'Spinning and mixing the colors...';
       } else if (phase === 'BUILDING' && mixedColor) {
-        promptId = `Wah! Warna ${mixedColor.nameId} membangun ${bp.nameId.toLowerCase()}!`;
-        promptEn = `Awesome! ${mixedColor.nameEn} is building the ${bp.nameEn.toLowerCase()}!`;
+        promptId =
+          isBonus && molenBonusStage === 2
+            ? `Baling-baling warna ${mixedColor.nameId} mulai terpasang!`
+            : `Wah! Warna ${mixedColor.nameId} membangun ${bp.nameId.toLowerCase()}!`;
+        promptEn =
+          isBonus && molenBonusStage === 2
+            ? `Attaching ${mixedColor.nameEn} windmill sails!`
+            : `Awesome! ${mixedColor.nameEn} is building the ${bp.nameEn.toLowerCase()}!`;
       } else if (phase === 'DONE' && mixedColor) {
-        promptId = `${bp.nameId} warna ${mixedColor.nameId} selesai!`;
-        promptEn = `${mixedColor.nameEn} ${bp.nameEn.toLowerCase()} is complete!`;
+        promptId = `${bp.nameId} warna-warni selesai dan berputar!`;
+        promptEn = `Colorful ${bp.nameEn} is complete!`;
       }
 
       callbacks.onSnapshot({
         vehicleId: 'molen',
+        missionVariant,
         phase,
         promptId,
         promptEn,
         selectedColors: [...selectedColors],
         mixedColor,
         molenBlueprint: blueprintId,
+        molenBonusStage: isBonus ? molenBonusStage : undefined,
         structureProgress: buildProgress,
         hintKey: activeHintKey,
         completed: phase === 'DONE',
@@ -550,12 +621,16 @@ export function createMissionController(
     emit();
     const initialBp = getBlueprintMeta();
     soundEngine.speakBilingual(
-      ageMode === 'toddler'
-        ? `Truk Molen! Ayo pilih satu warna untuk membangun ${initialBp.nameId}!`
-        : `Truk Molen! Ayo pilih dua warna untuk membangun ${initialBp.nameId}!`,
-      ageMode === 'toddler'
-        ? `Cement Mixer! Pick a color to build a ${initialBp.nameEn}!`
-        : `Cement Mixer! Mix two colors to build a ${initialBp.nameEn}!`,
+      isBonus
+        ? 'Misi dua Truk Molen! Ayo cat menara Kincir Taman dulu!'
+        : ageMode === 'toddler'
+          ? `Truk Molen! Ayo pilih satu warna untuk membangun ${initialBp.nameId}!`
+          : `Truk Molen! Ayo pilih dua warna untuk membangun ${initialBp.nameId}!`,
+      isBonus
+        ? 'Bonus Cement Mixer! Let us paint the Garden Windmill tower first!'
+        : ageMode === 'toddler'
+          ? `Cement Mixer! Pick a color to build a ${initialBp.nameEn}!`
+          : `Cement Mixer! Mix two colors to build a ${initialBp.nameEn}!`,
     );
 
     return {
@@ -565,20 +640,29 @@ export function createMissionController(
       cameraPos: new THREE.Vector3(0.2, 5.4, 12.2),
       cameraTarget: new THREE.Vector3(-0.2, 1.3, 3.2),
       update: (dt, elapsed) => {
+        if (windmillSailPivot.visible) {
+          windmillSailPivot.rotation.z -= dt * (phase === 'DONE' ? 1.85 : 0.8);
+        }
+
         if (phase === 'SPINNING') {
           spinTimer += dt;
           if (truck.drumGroup) truck.drumGroup.rotation.x += dt * 7.5;
           truck.bodyGroup.position.y = Math.abs(Math.sin(elapsed * 22)) * 0.05;
-          if (spinTimer > 1.7) {
+          if (spinTimer > 1.55) {
             phase = 'BUILDING';
             streamMesh.visible = true;
             if (mixedColor) {
               streamMat.color.set(mixedColor.hex);
-              blockMats.forEach((m, i) => {
-                m.color.set(mixedColor!.hex);
-                const shade = builtBlocks[i]?.shadeOffset ?? 0;
-                if (shade !== 0) m.color.offsetHSL(0, 0, shade);
-              });
+              if (isBonus && molenBonusStage === 2) {
+                sailMat.color.set(mixedColor.hex);
+                windmillSailPivot.visible = true;
+              } else {
+                blockMats.forEach((m, i) => {
+                  m.color.set(mixedColor!.hex);
+                  const shade = builtBlocks[i]?.shadeOffset ?? 0;
+                  if (shade !== 0) m.color.offsetHSL(0, 0, shade);
+                });
+              }
               if (truck.drumMaterial) {
                 const oldMap = truck.drumMaterial.map;
                 truck.drumMaterial.map = createMixerStripeTexture(mixedColor.hex, maxAnisotropy);
@@ -595,30 +679,51 @@ export function createMissionController(
           }
         } else if (phase === 'BUILDING') {
           if (truck.drumGroup) truck.drumGroup.rotation.x += dt * 4.5;
-          buildProgress = Math.min(1, buildProgress + dt * 0.45);
-          const stepSpan = 0.72 / Math.max(1, builtBlocks.length);
-          builtBlocks.forEach((b, idx) => {
-            const threshold = idx * stepSpan;
-            if (buildProgress > threshold) {
-              b.mesh.visible = true;
-              const localT = Math.min(1, (buildProgress - threshold) / 0.28);
-              const s = THREE.MathUtils.damp(b.mesh.scale.x, localT, 9, dt);
-              b.mesh.scale.set(s, s, s);
-            }
-          });
+          buildProgress = Math.min(1, buildProgress + dt * 0.48);
+
+          if (isBonus && molenBonusStage === 2) {
+            const s = THREE.MathUtils.damp(windmillSailPivot.scale.x, 1, 8, dt);
+            windmillSailPivot.scale.set(s, s, s);
+          } else {
+            const stepSpan = 0.72 / Math.max(1, builtBlocks.length);
+            builtBlocks.forEach((b, idx) => {
+              const threshold = idx * stepSpan;
+              if (buildProgress > threshold) {
+                b.mesh.visible = true;
+                const localT = Math.min(1, (buildProgress - threshold) / 0.28);
+                const s = THREE.MathUtils.damp(b.mesh.scale.x, localT, 9, dt);
+                b.mesh.scale.set(s, s, s);
+              }
+            });
+          }
+
           if (buildProgress >= 1) {
-            phase = 'DONE';
             streamMesh.visible = false;
             truck.bodyGroup.position.y = 0;
-            const bp = getBlueprintMeta();
-            if (mixedColor) {
+
+            if (isBonus && molenBonusStage === 1) {
+              molenBonusStage = 2;
+              selectedColors = [];
+              mixedColor = null;
+              buildProgress = 0;
+              phase = 'PICK';
               soundEngine.speakBilingual(
-                `${bp.nameId} warna ${mixedColor.nameId} selesai!`,
-                `${mixedColor.nameEn} ${bp.nameEn} is complete!`,
+                'Menara jadi! Sekarang pilih warna baling-baling kincir!',
+                'Tower built! Now pick a color for the spinning sails!',
               );
+              emit();
+            } else {
+              phase = 'DONE';
+              const bp = getBlueprintMeta();
+              if (mixedColor) {
+                soundEngine.speakBilingual(
+                  `${bp.nameId} selesai! Hebat sekali!`,
+                  `${bp.nameEn} is complete! Great job!`,
+                );
+              }
+              emit();
+              later(() => callbacks.onCelebrate('molen'), 650);
             }
-            emit();
-            later(() => callbacks.onCelebrate('molen'), 600);
           }
         } else {
           if (truck.drumGroup) truck.drumGroup.rotation.x += dt * 0.6;
@@ -644,7 +749,7 @@ export function createMissionController(
       handleRaycastHit: () => {},
       handleAction: (action, payload) => {
         resetIdle(emit);
-        if (action === 'SELECT_BLUEPRINT' && phase === 'PICK') {
+        if (action === 'SELECT_BLUEPRINT' && phase === 'PICK' && !isBonus) {
           const nextBp = payload as MolenBlueprintId;
           const meta = MOLEN_BLUEPRINTS.find((b) => b.id === nextBp);
           if (!meta || nextBp === blueprintId) return;
@@ -664,7 +769,6 @@ export function createMissionController(
           } else {
             selectedColors = [...selectedColors, colorId];
           }
-          // Preview color tint on drum immediately
           if (truck.drumMaterial) {
             const previewHex =
               selectedColors.length === 1
@@ -738,9 +842,12 @@ export function createMissionController(
     barn.add(p1, p2, beam, roofCap);
     group.add(barn);
 
-    const maxCargo = ageMode === 'toddler' ? 3 : 10;
+    const maxCargo = ageMode === 'toddler' ? 4 : 10;
     let cargoType: CargoTypeId = 'apple';
-    let loadedCount = ageMode === 'toddler' ? 2 : 5;
+    const secondaryCargoType: CargoTypeId = 'box';
+    let primaryCount = isBonus ? (ageMode === 'toddler' ? 2 : 3) : ageMode === 'toddler' ? 2 : 5;
+    let secondaryCount = isBonus ? (ageMode === 'toddler' ? 1 : 3) : 0;
+    let loadedCount = primaryCount + secondaryCount;
     let phase: 'LOAD' | 'COUNT' | 'DRIVE' | 'DONE' = 'LOAD';
     let wrongKey = 0;
     let numberChoices: number[] = [];
@@ -752,23 +859,22 @@ export function createMissionController(
         truck.cargoSlot.remove(truck.cargoSlot.children[0]);
       }
       cargoMeshes.length = 0;
-      // 10 non-clipping 2-layer slots inside bed interior (X: [-0.92, 0.92], Z: [-0.68, 0.68])
       const slots: [number, number, number][] = [
-        // Layer 1 (6 items resting on bed floor)
         [-0.6, 0.05, -0.34],
         [0, 0.05, -0.34],
         [0.6, 0.05, -0.34],
         [-0.6, 0.05, 0.34],
         [0, 0.05, 0.34],
         [0.6, 0.05, 0.34],
-        // Layer 2 (4 items stacked cleanly above Layer 1)
         [-0.34, 0.52, -0.28],
         [0.34, 0.52, -0.28],
         [-0.34, 0.52, 0.28],
         [0.34, 0.52, 0.28],
       ];
+      loadedCount = primaryCount + (isBonus ? secondaryCount : 0);
       for (let i = 0; i < loadedCount; i++) {
-        const prop = buildCargoProp(cargoType);
+        const itemKind = isBonus && i >= primaryCount ? secondaryCargoType : cargoType;
+        const prop = buildCargoProp(itemKind);
         const [sx, sy, sz] = slots[i % slots.length];
         prop.position.set(sx, sy, sz);
         prop.userData.baseY = sy;
@@ -780,22 +886,35 @@ export function createMissionController(
 
     const emit = () => {
       const cargoObj = CARGO_OPTIONS.find((c) => c.id === cargoType)!;
-      let promptId = `Pilih barang & jumlahnya, lalu tekan Ayo Hitung!`;
-      let promptEn = `Pick cargo & amount, then tap Let's Count!`;
+      const secondObj = CARGO_OPTIONS.find((c) => c.id === secondaryCargoType)!;
+      let promptId = isBonus
+        ? `Misi 2 Panen Campur! Muat ${cargoObj.nameId} & ${secondObj.nameId}, lalu hitung totalnya!`
+        : `Pilih barang & jumlahnya, lalu tekan Ayo Hitung!`;
+      let promptEn = isBonus
+        ? `Bonus Harvest Mix! Load ${cargoObj.nameEn} & ${secondObj.nameEn}, then count the total!`
+        : `Pick cargo & amount, then tap Let's Count!`;
       if (phase === 'COUNT') {
-        promptId = `Ada berapa ${cargoObj.nameId} di bak truk? Hitung ya!`;
-        promptEn = `How many ${cargoObj.nameEn} are in the truck?`;
+        promptId = isBonus
+          ? `Ada berapa total barang panen di bak truk? Hitung semuanya!`
+          : `Ada berapa ${cargoObj.nameId} di bak truk? Hitung ya!`;
+        promptEn = isBonus
+          ? `How many harvest items are in the truck altogether?`
+          : `How many ${cargoObj.nameEn} are in the truck?`;
       } else if (phase === 'DRIVE' || phase === 'DONE') {
         const nw = NUMBER_WORDS[loadedCount];
-        promptId = `Benar! ${nw.id} ${cargoObj.nameId}! Truk melaju!`;
-        promptEn = `Correct! ${nw.en} ${cargoObj.nameEn}! Off we go!`;
+        promptId = `Benar! ${nw.id} muatan siap diantar! Truk melaju!`;
+        promptEn = `Correct! ${nw.en} items ready! Off we go!`;
       }
       callbacks.onSnapshot({
         vehicleId: 'angkut',
+        missionVariant,
         phase,
         promptId,
         promptEn,
         cargoType,
+        secondaryCargoType: isBonus ? secondaryCargoType : undefined,
+        primaryCargoCount: primaryCount,
+        secondaryCargoCount: isBonus ? secondaryCount : undefined,
         loadedCount,
         targetCount: maxCargo,
         numberChoices,
@@ -807,8 +926,12 @@ export function createMissionController(
 
     emit();
     soundEngine.speakBilingual(
-      'Truk Angkut! Pilih barang dan jumlahnya!',
-      'Cargo Truck! Choose your cargo!',
+      isBonus
+        ? 'Misi dua Truk Angkut! Keranjang Panen Campur! Ayo muat dan hitung totalnya!'
+        : 'Truk Angkut! Pilih barang dan jumlahnya!',
+      isBonus
+        ? 'Bonus Cargo Truck! Mixed Harvest Basket! Load and count the total!'
+        : 'Cargo Truck! Choose your cargo!',
     );
 
     return {
@@ -870,13 +993,36 @@ export function createMissionController(
           emit();
         } else if (action === 'CHANGE_AMOUNT' && phase === 'LOAD') {
           const delta = payload as number;
-          const next = THREE.MathUtils.clamp(loadedCount + delta, 1, maxCargo);
-          if (next !== loadedCount) {
-            loadedCount = next;
+          if (isBonus) {
+            const nextPrimary = THREE.MathUtils.clamp(primaryCount + delta, 1, Math.max(1, maxCargo - secondaryCount));
+            if (nextPrimary !== primaryCount) {
+              primaryCount = nextPrimary;
+              rebuildCargoInBed();
+              const nw = NUMBER_WORDS[loadedCount];
+              soundEngine.playPop();
+              soundEngine.speakBilingual(nw.id, nw.en);
+              emit();
+            }
+          } else {
+            const next = THREE.MathUtils.clamp(primaryCount + delta, 1, maxCargo);
+            if (next !== primaryCount) {
+              primaryCount = next;
+              rebuildCargoInBed();
+              const nw = NUMBER_WORDS[loadedCount];
+              soundEngine.playPop();
+              soundEngine.speakBilingual(nw.id, nw.en);
+              emit();
+            }
+          }
+        } else if (action === 'CHANGE_SECONDARY_AMOUNT' && phase === 'LOAD' && isBonus) {
+          const delta = payload as number;
+          const nextSec = THREE.MathUtils.clamp(secondaryCount + delta, 1, Math.max(1, maxCargo - primaryCount));
+          if (nextSec !== secondaryCount) {
+            secondaryCount = nextSec;
+            rebuildCargoInBed();
             const nw = NUMBER_WORDS[loadedCount];
             soundEngine.playPop();
             soundEngine.speakBilingual(nw.id, nw.en);
-            rebuildCargoInBed();
             emit();
           }
         } else if (action === 'START_COUNT' && phase === 'LOAD') {
@@ -889,8 +1035,12 @@ export function createMissionController(
           const info = CARGO_OPTIONS.find((c) => c.id === cargoType)!;
           soundEngine.playPop();
           soundEngine.speakBilingual(
-            `Ayo hitung! Ada berapa ${info.nameId} di bak truk?`,
-            `Let's count! How many ${info.nameEn}?`,
+            isBonus
+              ? 'Ayo hitung semua barang panen di bak truk!'
+              : `Ayo hitung! Ada berapa ${info.nameId} di bak truk?`,
+            isBonus
+              ? 'Count all the harvest items in the truck!'
+              : `Let's count! How many ${info.nameEn}?`,
           );
           emit();
         } else if (action === 'ANSWER_COUNT' && phase === 'COUNT') {
@@ -1018,6 +1168,56 @@ export function createMissionController(
       pipeVisuals.push({ ...vis, targetAngle: startAngle });
     });
 
+    // Bonus 2nd Mission: Sunlit 3D Village Flowerbed that sprouts and blooms as water flows!
+    const flowerStems: THREE.Group[] = [];
+    if (isBonus) {
+      const gardenBox = new THREE.Group();
+      gardenBox.position.set(-1.5, 0, 0.35);
+      const timberMat = new THREE.MeshStandardMaterial({
+        map: createWoodPlankTexture('#A86F38', maxAnisotropy),
+        roughness: 0.82,
+      });
+      const soilMat = new THREE.MeshStandardMaterial({ color: '#6E4A2C', roughness: 0.94 });
+      const bedFrame = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.42, 1.45), timberMat);
+      bedFrame.position.y = 0.21;
+      bedFrame.castShadow = true;
+      bedFrame.receiveShadow = true;
+      const bedSoil = new THREE.Mesh(new THREE.BoxGeometry(4.85, 0.36, 1.15), soilMat);
+      bedSoil.position.y = 0.28;
+      gardenBox.add(bedFrame, bedSoil);
+
+      const petalPalette = ['#E85D4A', '#F3C13A', '#9A69D6', '#F472B6', '#38BDF8', '#FB923C', '#EF4444'];
+      const stemMat = new THREE.MeshStandardMaterial({ color: '#3F9A4B', roughness: 0.72 });
+      const centerMat = new THREE.MeshStandardMaterial({ color: '#FDE047', roughness: 0.45 });
+
+      for (let i = 0; i < 7; i++) {
+        const fl = new THREE.Group();
+        const fx = -2.0 + i * 0.67;
+        const fz = (i % 2 === 0 ? -0.22 : 0.22);
+        fl.position.set(fx, 0.42, fz);
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.95, 8), stemMat);
+        stem.position.y = 0.47;
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), centerMat);
+        head.position.y = 0.98;
+        const pMat = new THREE.MeshStandardMaterial({
+          map: createGouachePaintTexture(petalPalette[i % petalPalette.length], maxAnisotropy),
+          roughness: 0.55,
+        });
+        for (let p = 0; p < 5; p++) {
+          const ang = (p / 5) * Math.PI * 2;
+          const petal = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), pMat);
+          petal.scale.set(1.25, 0.5, 0.9);
+          petal.position.set(Math.cos(ang) * 0.2, 0.98, Math.sin(ang) * 0.2);
+          fl.add(petal);
+        }
+        fl.add(stem, head);
+        fl.scale.set(0.32, 0.22, 0.32); // Thirsty buds before water arrives!
+        gardenBox.add(fl);
+        flowerStems.push(fl);
+      }
+      group.add(gardenBox);
+    }
+
     let phase: 'PUZZLE' | 'FILLING' | 'DRIVE' | 'DONE' = 'PUZZLE';
     let tankFill = 0;
 
@@ -1073,17 +1273,30 @@ export function createMissionController(
     evaluatePipes();
 
     const emit = () => {
-      let promptId = 'Ketuk pipa 3D untuk memutarnya agar air mengalir ke tangki!';
-      let promptEn = 'Tap the 3D pipes to rotate and connect water to the tank!';
+      let promptId = isBonus
+        ? 'Misi 2 Taman Bunga! Sambung pipa air agar bunga-bunga bermekaran!'
+        : 'Ketuk pipa 3D untuk memutarnya agar air mengalir ke tangki!';
+      let promptEn = isBonus
+        ? 'Bonus Flower Garden! Connect the pipes to bloom the village flowers!'
+        : 'Tap the 3D pipes to rotate and connect water to the tank!';
       if (phase === 'FILLING') {
-        promptId = `Air mengalir! Mengisi tangki ${Math.round(tankFill * 100)}%...`;
-        promptEn = `Water flowing! Filling tank ${Math.round(tankFill * 100)}%...`;
+        promptId = isBonus
+          ? `Air menyiram taman! Bunga bermekaran ${Math.round(tankFill * 100)}%...`
+          : `Air mengalir! Mengisi tangki ${Math.round(tankFill * 100)}%...`;
+        promptEn = isBonus
+          ? `Watering the garden! Flowers blooming ${Math.round(tankFill * 100)}%...`
+          : `Water flowing! Filling tank ${Math.round(tankFill * 100)}%...`;
       } else if (phase === 'DRIVE' || phase === 'DONE') {
-        promptId = 'Tangki Penuh! Truk Tangki siap jalan!';
-        promptEn = 'Tank Full! Water Tanker is rolling!';
+        promptId = isBonus
+          ? 'Taman Bunga mekar indah! Truk Tangki hebat!'
+          : 'Tangki Penuh! Truk Tangki siap jalan!';
+        promptEn = isBonus
+          ? 'Flower Garden is in full bloom! Awesome Water Tanker!'
+          : 'Tank Full! Water Tanker is rolling!';
       }
       callbacks.onSnapshot({
         vehicleId: 'tangki',
+        missionVariant,
         phase,
         promptId,
         promptEn,
@@ -1092,6 +1305,7 @@ export function createMissionController(
         pipeRows: rows,
         pipeTemplateId,
         tankFill,
+        gardenBloom: isBonus ? tankFill : undefined,
         hintKey: activeHintKey,
         completed: phase === 'DONE',
       });
@@ -1099,8 +1313,12 @@ export function createMissionController(
 
     emit();
     soundEngine.speakBilingual(
-      'Truk Tangki! Ayo putar pipa air sampai tersambung!',
-      'Water Tanker! Connect the water pipes!',
+      isBonus
+        ? 'Misi dua Truk Tangki! Sambungkan pipa untuk menyiram Taman Bunga!'
+        : 'Truk Tangki! Ayo putar pipa air sampai tersambung!',
+      isBonus
+        ? 'Bonus Water Tanker! Connect the pipes to water the Flower Garden!'
+        : 'Water Tanker! Connect the water pipes!',
     );
 
     const rotatePipe = (idx: number) => {
@@ -1115,7 +1333,10 @@ export function createMissionController(
       if (solved) {
         phase = 'FILLING';
         soundEngine.playWaterSplash();
-        soundEngine.speakBilingual('Pipa tersambung! Air mengalir!', 'Connected! Water is flowing!');
+        soundEngine.speakBilingual(
+          isBonus ? 'Pipa tersambung! Bunga-bunga mulai mekar!' : 'Pipa tersambung! Air mengalir!',
+          isBonus ? 'Connected! The flowers are blooming!' : 'Connected! Water is flowing!',
+        );
       }
       emit();
     };
@@ -1127,11 +1348,19 @@ export function createMissionController(
       group,
       raycastTargets,
       cameraPos: new THREE.Vector3(-0.2, 6.8, 11.4),
-      cameraTarget: new THREE.Vector3(-0.2, 1.0, 3.2),
+      cameraTarget: new THREE.Vector3(-0.2, 1.0, 3.0),
       update: (dt, elapsed) => {
         pipeVisuals.forEach((pv) => {
           pv.group.rotation.y = THREE.MathUtils.damp(pv.group.rotation.y, pv.targetAngle, 12, dt);
         });
+        if (flowerStems.length > 0) {
+          const bloomTarget = 0.25 + tankFill * 0.95;
+          flowerStems.forEach((fl, i) => {
+            const s = THREE.MathUtils.damp(fl.scale.y, bloomTarget, 6, dt);
+            fl.scale.set(0.32 + tankFill * 0.78, s, 0.32 + tankFill * 0.78);
+            fl.rotation.z = Math.sin(elapsed * 2.5 + i * 0.9) * 0.06 * tankFill;
+          });
+        }
         if (phase === 'FILLING') {
           tankFill = Math.min(1, tankFill + dt * 0.42);
           if (truck.waterFillMesh) {
@@ -1141,7 +1370,10 @@ export function createMissionController(
           if (tankFill >= 1) {
             phase = 'DRIVE';
             soundEngine.playHorn('tangki');
-            soundEngine.speakBilingual('Tangki Penuh! Berangkat!', 'Tank Full! Let us go!');
+            soundEngine.speakBilingual(
+              isBonus ? 'Bunga mekar indah! Berangkat!' : 'Tangki Penuh! Berangkat!',
+              isBonus ? 'Flowers are blooming! Let us go!' : 'Tank Full! Let us go!',
+            );
             emit();
           } else {
             const fillStep = Math.floor(tankFill * 20);
@@ -1208,7 +1440,7 @@ export function createMissionController(
         : 4 + Math.floor(Math.random() * 7); // 4..10 in Prasekolah mode
     const numberChoices = makeNumberChoices(countTarget, maxCount, ageMode === 'toddler' ? 3 : 4);
     const tolerance = ageMode === 'toddler' ? 0.36 : 0.22;
-    const totalDrops = ageMode === 'toddler' ? 1 : 2;
+    const totalDrops = isBonus ? (ageMode === 'toddler' ? 2 : 3) : ageMode === 'toddler' ? 1 : 2;
 
     // Counting crates displayed neatly in front-left for Phase 1 (supports 1..10 without clipping)
     const countGroup = new THREE.Group();
@@ -1320,26 +1552,40 @@ export function createMissionController(
     let lastCraneSoundTime = 0;
 
     const emit = () => {
-      let promptId = 'Hitung dulu jumlah peti agar Truk Crane menyala!';
-      let promptEn = 'Count the crates first to start the Crane Truck!';
+      let promptId = isBonus
+        ? 'Misi 2 Peti Emas! Hitung dulu petinya sebelum menumpuk ke atas!'
+        : 'Hitung dulu jumlah peti agar Truk Crane menyala!';
+      let promptEn = isBonus
+        ? 'Bonus Golden Stack! Count the crates before building a tall golden stack!'
+        : 'Count the crates first to start the Crane Truck!';
       if (phase === 'BALANCE') {
         const isAligned = Math.abs(boomOffset) <= tolerance;
+        const onGoldFinal = isBonus && droppedCount === totalDrops - 1;
         promptId = isAligned
-          ? 'Tepat di tengah! Tekan Turunkan Beban!'
+          ? onGoldFinal
+            ? 'Peti Emas tepat di tengah! Tekan Turunkan!'
+            : 'Tepat di tengah! Tekan Turunkan Beban!'
           : 'Geser Kiri atau Kanan ke zona hijau agar seimbang!';
         promptEn = isAligned
-          ? 'Right in the middle! Press Drop Load!'
+          ? onGoldFinal
+            ? 'Golden Crate aligned! Press Drop!'
+            : 'Right in the middle! Press Drop Load!'
           : 'Move Left or Right into the green zone to balance!';
       } else if (phase === 'WOBBLE') {
         promptId = 'Wah miring! Geser lebih dekat ke tengah ya!';
         promptEn = 'Oops, tilted! Move closer to the center!';
       } else if (phase === 'DONE') {
-        promptId = 'Beban seimbang sempurna! Hebat!';
-        promptEn = 'Perfectly balanced! Awesome!';
+        promptId = isBonus
+          ? 'Menara Peti Emas berdiri seimbang sempurna!'
+          : 'Beban seimbang sempurna! Hebat!';
+        promptEn = isBonus
+          ? 'Golden Treasure Stack balanced perfectly!'
+          : 'Perfectly balanced! Awesome!';
       }
 
       callbacks.onSnapshot({
         vehicleId: 'crane',
+        missionVariant,
         phase,
         promptId,
         promptEn,
@@ -1358,8 +1604,12 @@ export function createMissionController(
 
     emit();
     soundEngine.speakBilingual(
-      'Truk Crane! Hitung dulu petinya sebelum mengangkat!',
-      'Crane Truck! Count the crates first!',
+      isBonus
+        ? 'Misi dua Truk Crane! Hitung petinya lalu susun Menara Peti Emas!'
+        : 'Truk Crane! Hitung dulu petinya sebelum mengangkat!',
+      isBonus
+        ? 'Bonus Crane Truck! Count the crates and build the Golden Stack!'
+        : 'Crane Truck! Count the crates first!',
     );
 
     return {
@@ -1462,14 +1712,22 @@ export function createMissionController(
             if (Math.abs(boomOffset) <= tolerance) {
               // Balanced! Place crate onto plank
               droppedCount += 1;
+              const isGoldenFinal = isBonus && droppedCount === totalDrops;
               const placed = new THREE.Mesh(
                 new THREE.BoxGeometry(0.86, 0.86, 0.86),
                 new THREE.MeshStandardMaterial({
                   map: paintedWoodTex,
-                  color: droppedCount === 1 ? '#4E92D6' : '#48A868',
+                  color: isGoldenFinal
+                    ? '#F2BE2C'
+                    : droppedCount === 1
+                      ? '#4E92D6'
+                      : '#48A868',
+                  emissive: isGoldenFinal ? '#B47A0E' : '#000000',
+                  emissiveIntensity: isGoldenFinal ? 0.35 : 0,
                   bumpMap: paperBump,
                   bumpScale: 0.025,
-                  roughness: 0.62,
+                  roughness: isGoldenFinal ? 0.34 : 0.62,
+                  metalness: isGoldenFinal ? 0.45 : 0.05,
                 }),
               );
               placed.position.set(boomOffset * 1.1, 0.54 + (droppedCount - 1) * 0.86, 0);
@@ -1487,11 +1745,18 @@ export function createMissionController(
                 emit();
                 later(() => callbacks.onCelebrate('crane'), 750);
               } else {
-                // Hoist up for next crate
-                targetCableLength = 1.1;
-                boomOffset = 0.68;
+                // Hoist up for next crate; tint hanging crate gold if next is the Golden Finale!
+                const nextIsGold = isBonus && droppedCount === totalDrops - 1;
+                const hangMat = hangingCrate.material as THREE.MeshStandardMaterial;
+                hangMat.color.set(nextIsGold ? '#F2BE2C' : '#48A868');
+                hangMat.metalness = nextIsGold ? 0.45 : 0.05;
+                targetCableLength = Math.max(0.55, 1.1 - droppedCount * 0.2);
+                boomOffset = droppedCount % 2 === 1 ? 0.68 : -0.62;
                 phase = 'BALANCE';
-                soundEngine.speakBilingual('Bagus! Satu peti lagi!', 'Nice! One more crate!');
+                soundEngine.speakBilingual(
+                  nextIsGold ? 'Sekarang angkat Peti Emas ke puncak!' : 'Bagus! Satu peti lagi!',
+                  nextIsGold ? 'Now lift the Golden Crate to the top!' : 'Nice! One more crate!',
+                );
                 emit();
               }
             } else {
@@ -1636,20 +1901,63 @@ export function createMissionController(
       fBox.position.set(wx, 1.66, 1.52);
       building.add(wFrame, win, shL, shR, fBox);
     }
+    // Bonus 2nd Mission: Tall Storybook Village Bell Tower Spire & Clock Face
+    if (isBonus) {
+      const belfry = new THREE.Mesh(
+        new THREE.BoxGeometry(2.1, 1.9, 1.9),
+        new THREE.MeshStandardMaterial({
+          map: createCottageWallTexture('#F6ECD7', '#5E422E', maxAnisotropy),
+          roughness: 0.88,
+        }),
+      );
+      belfry.position.set(0, 5.15, 0);
+      belfry.castShadow = true;
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(1.75, 1.6, 4), bRoofMat);
+      spire.position.set(0, 6.85, 0);
+      spire.rotation.y = Math.PI / 4;
+      spire.castShadow = true;
+      const clockFace = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.52, 0.52, 0.1, 18),
+        new THREE.MeshStandardMaterial({ color: '#FFFDF5', roughness: 0.45 }),
+      );
+      clockFace.rotation.x = Math.PI / 2;
+      clockFace.position.set(0, 5.25, 0.98);
+      const clockRim = new THREE.Mesh(
+        new THREE.TorusGeometry(0.54, 0.06, 8, 20),
+        new THREE.MeshStandardMaterial({ color: '#DFAF4B', metalness: 0.55, roughness: 0.35 }),
+      );
+      clockRim.position.set(0, 5.25, 1.01);
+      building.add(belfry, spire, clockFace, clockRim);
+    }
+
     // Invisible front spray plane so continuous drag-to-spray sweeps smoothly across the building
     const spraySurface = new THREE.Mesh(
-      new THREE.PlaneGeometry(5.6, 5.4),
+      new THREE.PlaneGeometry(5.8, isBonus ? 7.6 : 5.4),
       new THREE.MeshBasicMaterial({ visible: false }),
     );
-    spraySurface.position.set(0, 2.5, 1.55);
+    spraySurface.position.set(0, isBonus ? 3.5 : 2.5, 1.55);
     spraySurface.userData.isSpraySurface = true;
     building.add(spraySurface);
     group.add(building);
     raycastTargets.push(spraySurface);
 
-    // Flame clusters
-    const flamePositions: THREE.Vector3[] =
-      ageMode === 'toddler'
+    // Flame clusters (+1 high bell-tower flame in Bonus 2nd Mission!)
+    const flamePositions: THREE.Vector3[] = isBonus
+      ? ageMode === 'toddler'
+        ? [
+            new THREE.Vector3(1.9, 2.1, 1.15),
+            new THREE.Vector3(3.2, 5.1, 0.72),
+            new THREE.Vector3(4.5, 2.1, 1.15),
+            new THREE.Vector3(3.2, 3.6, 0.95),
+          ]
+        : [
+            new THREE.Vector3(1.9, 2.1, 1.15),
+            new THREE.Vector3(3.2, 5.3, 0.72),
+            new THREE.Vector3(4.5, 2.1, 1.15),
+            new THREE.Vector3(3.2, 3.6, 0.95),
+            new THREE.Vector3(3.2, 0.95, 1.25),
+          ]
+      : ageMode === 'toddler'
         ? [
             new THREE.Vector3(1.9, 2.1, 1.15),
             new THREE.Vector3(3.2, 3.9, 0.9),
@@ -1773,6 +2081,7 @@ export function createMissionController(
 
       callbacks.onSnapshot({
         vehicleId: 'pemadam',
+        missionVariant,
         phase,
         promptId,
         promptEn,
@@ -2065,11 +2374,41 @@ export function createMissionController(
   const orgTex = makeBin(orgBinGroup, '#2B8E4C', 'ORG', 'Organik', 'organic');
   const nonOrgTex = makeBin(nonOrgBinGroup, '#DCA21A', 'NON', 'Non-Organik', 'non-organic');
 
-  // Generate balanced list of waste items
+  // Bonus 2nd Mission: Park Picnic Cleanup Bench & Checkered Picnic Mat beside bins
+  if (isBonus) {
+    const picnicGroup = new THREE.Group();
+    picnicGroup.position.set(-2.0, 0, 4.15);
+    const matCloth = new THREE.Mesh(
+      new THREE.BoxGeometry(3.8, 0.05, 2.4),
+      new THREE.MeshStandardMaterial({
+        map: createGouachePaintTexture('#E5644E', maxAnisotropy),
+        roughness: 0.88,
+      }),
+    );
+    matCloth.position.y = 0.03;
+    matCloth.receiveShadow = true;
+    const benchWood = new THREE.MeshStandardMaterial({
+      map: createWoodPlankTexture('#A86F38', maxAnisotropy),
+      roughness: 0.82,
+    });
+    const benchSeat = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.14, 0.6), benchWood);
+    benchSeat.position.set(0, 0.56, -1.65);
+    benchSeat.castShadow = true;
+    const benchBack = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.44, 0.12), benchWood);
+    benchBack.position.set(0, 0.92, -1.9);
+    benchBack.castShadow = true;
+    picnicGroup.add(matCloth, benchSeat, benchBack);
+    group.add(picnicGroup);
+  }
+
+  // Generate balanced list of waste items (+2 extra festive picnic items in Bonus mode!)
   const organics = WASTE_CATALOG.filter((w) => w.category === 'organic');
   const nonOrganics = WASTE_CATALOG.filter((w) => w.category === 'non-organic');
-  const itemPool =
-    ageMode === 'toddler'
+  const itemPool = isBonus
+    ? ageMode === 'toddler'
+      ? [organics[0], nonOrganics[0], organics[1], nonOrganics[1], organics[2], nonOrganics[2]]
+      : [organics[0], nonOrganics[0], organics[1], nonOrganics[1], organics[2], nonOrganics[2], organics[0], nonOrganics[1]]
+    : ageMode === 'toddler'
       ? [organics[0], nonOrganics[0], organics[1], nonOrganics[1]]
       : [organics[0], nonOrganics[0], organics[1], nonOrganics[1], organics[2], nonOrganics[2]];
 
@@ -2080,14 +2419,15 @@ export function createMissionController(
   }));
 
   const wasteVisuals: { uid: number; mesh: THREE.Group; targetPos: THREE.Vector3 }[] = [];
+  const colsPerWasteRow = wasteItems.length > 6 ? 4 : 3;
   wasteItems.forEach((item, idx) => {
     const m = buildWasteProp(item.kind);
-    const col = idx % 3;
-    const row = Math.floor(idx / 3);
-    const px = -3.4 + col * 1.45;
+    const col = idx % colsPerWasteRow;
+    const row = Math.floor(idx / colsPerWasteRow);
+    const px = (colsPerWasteRow === 4 ? -3.6 : -3.4) + col * (colsPerWasteRow === 4 ? 1.15 : 1.45);
     const pz = 3.5 + row * 1.15;
     m.position.set(px, 0.06, pz);
-    m.scale.set(1.35, 1.35, 1.35);
+    m.scale.set(1.3, 1.3, 1.3);
 
     const hit = new THREE.Mesh(
       new THREE.SphereGeometry(0.62, 8, 8),
@@ -2114,10 +2454,14 @@ export function createMissionController(
   const emit = () => {
     const selectedItem = wasteItems.find((w) => w.uid === selectedWasteUid && !w.sorted);
     let promptId = selectedItem
-      ? `Masukkan ${selectedItem.nameId} ke tong Organik atau Non-Organik!`
+      ? isBonus
+        ? `Piknik Taman! Masukkan ${selectedItem.nameId} ke tong Organik atau Non-Organik!`
+        : `Masukkan ${selectedItem.nameId} ke tong Organik atau Non-Organik!`
       : 'Pilih sampah untuk dimasukkan ke tong yang tepat!';
     let promptEn = selectedItem
-      ? `Put ${selectedItem.nameEn} into the Organic or Non-Organic bin!`
+      ? isBonus
+        ? `Park Picnic! Put ${selectedItem.nameEn} into the Organic or Non-Organic bin!`
+        : `Put ${selectedItem.nameEn} into the Organic or Non-Organic bin!`
       : 'Pick a waste item to sort into the right bin!';
 
     if (phase === 'COUNT') {
@@ -2126,12 +2470,17 @@ export function createMissionController(
       promptId = `Hebat! Sekarang hitung, ada berapa sampah di tong ${catId}?`;
       promptEn = `Awesome! How many items are in the ${catEn} bin?`;
     } else if (phase === 'DRIVE' || phase === 'DONE') {
-      promptId = 'Benar! Truk Sampah mengangkut sampah daur ulang!';
-      promptEn = 'Correct! Garbage Truck is taking the bins away!';
+      promptId = isBonus
+        ? 'Taman piknik bersih ceria! Truk Sampah berangkat!'
+        : 'Benar! Truk Sampah mengangkut sampah daur ulang!';
+      promptEn = isBonus
+        ? 'Picnic park is sparkling clean! Garbage Truck rolling!'
+        : 'Correct! Garbage Truck is taking the bins away!';
     }
 
     callbacks.onSnapshot({
       vehicleId: 'sampah',
+      missionVariant,
       phase,
       promptId,
       promptEn,

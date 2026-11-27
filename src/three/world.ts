@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import { VEHICLES } from '../types/game';
 import {
   createAwningStripeTexture,
   createCobblestoneTexture,
   createCottageWallTexture,
   createFoliageTexture,
+  createGouachePaintTexture,
   createGrassTexture,
   createHillPatchworkTexture,
   createRoadTexture,
@@ -17,6 +19,7 @@ import {
 export interface WorldEnvironment {
   group: THREE.Group;
   clouds: THREE.Group[];
+  garageHouses: THREE.Group[];
   sunLight: THREE.DirectionalLight;
   dispose: () => void;
 }
@@ -62,8 +65,8 @@ export function buildStorybookWorld(
     sunLight.shadow.mapSize.width = 2048;
     sunLight.shadow.mapSize.height = 2048;
     sunLight.shadow.camera.near = 2;
-    sunLight.shadow.camera.far = 75;
-    const d = 21;
+    sunLight.shadow.camera.far = 82;
+    const d = 26;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
@@ -97,9 +100,9 @@ export function buildStorybookWorld(
   ground.receiveShadow = true;
   group.add(ground);
 
-  // Central Sandstone Cobblestone Town Plaza (matching start screen town square)
-  const cobbleTex = createCobblestoneTexture(maxAnisotropy, 6, 6);
-  const plazaGeo = new THREE.CircleGeometry(11.3, 44);
+  // Central Sandstone Cobblestone Town Plaza (wide circular square ringed by the 8 garage houses)
+  const cobbleTex = createCobblestoneTexture(maxAnisotropy, 7, 7);
+  const plazaGeo = new THREE.CircleGeometry(12.2, 48);
   const plazaMat = new THREE.MeshStandardMaterial({
     map: cobbleTex,
     bumpMap: paperBump,
@@ -113,7 +116,7 @@ export function buildStorybookWorld(
   disposables.push(plazaGeo, plazaMat);
   const plaza = new THREE.Mesh(plazaGeo, plazaMat);
   plaza.rotation.x = -Math.PI / 2;
-  plaza.position.set(0, 0.02, -3.5);
+  plaza.position.set(0, 0.02, -2.6);
   plaza.receiveShadow = true;
   group.add(plaza);
 
@@ -125,16 +128,16 @@ export function buildStorybookWorld(
     roughness: 0.88,
     metalness: 0.02,
   });
-  const outerCurbGeo = new THREE.TorusGeometry(11.35, 0.16, 8, 56);
+  const outerCurbGeo = new THREE.TorusGeometry(12.25, 0.16, 8, 60);
   disposables.push(curbMat, outerCurbGeo);
   const outerCurb = new THREE.Mesh(outerCurbGeo, curbMat);
   outerCurb.rotation.x = Math.PI / 2;
-  outerCurb.position.set(0, 0.05, -3.5);
+  outerCurb.position.set(0, 0.05, -2.6);
   outerCurb.scale.set(1, 1, 0.55);
   outerCurb.receiveShadow = true;
   group.add(outerCurb);
 
-  // Inner Sunny Village Green Island + Stone Fountain (clear of all 6 parked trucks)
+  // Inner Sunny Village Green Island + Stone Fountain (clear of all 8 garage driveways)
   const innerLawnGeo = new THREE.CircleGeometry(2.65, 32);
   const innerLawnMat = new THREE.MeshStandardMaterial({
     map: grassTex,
@@ -149,20 +152,20 @@ export function buildStorybookWorld(
 
   const innerLawn = new THREE.Mesh(innerLawnGeo, innerLawnMat);
   innerLawn.rotation.x = -Math.PI / 2;
-  innerLawn.position.set(0, 0.028, -3.5);
+  innerLawn.position.set(0, 0.028, -2.6);
   innerLawn.receiveShadow = true;
   group.add(innerLawn);
 
   const innerCurb = new THREE.Mesh(innerCurbGeo, curbMat);
   innerCurb.rotation.x = Math.PI / 2;
-  innerCurb.position.set(0, 0.06, -3.5);
+  innerCurb.position.set(0, 0.06, -2.6);
   innerCurb.scale.set(1, 1, 0.6);
   innerCurb.receiveShadow = true;
   group.add(innerCurb);
 
   // Charming Miniature Tiered Stone Village Fountain in center of town green (echoing start screen)
   const fountainGroup = new THREE.Group();
-  fountainGroup.position.set(0, 0.04, -3.5);
+  fountainGroup.position.set(0, 0.04, -2.6);
   const fountainStoneMat = new THREE.MeshStandardMaterial({
     color: '#CFC5B4',
     bumpMap: paperBump,
@@ -261,18 +264,23 @@ export function buildStorybookWorld(
     group.add(hill);
   });
 
-  // Layered Painterly Storybook Oak Trees (warm curved bark + multi-cluster dappled canopies)
+  // Layered Painterly Storybook Oak Trees (ringing cleanly behind all 8 crescent garage cottages)
   const treeCoords: [number, number][] = [];
-  for (let i = 0; i < 44; i++) {
-    const angle = (i / 44) * Math.PI * 2;
-    const radius = 17.5 + (i % 4) * 5.2;
+  for (let i = 0; i < 48; i++) {
+    const angle = (i / 48) * Math.PI * 2;
+    const radius = 22.8 + (i % 4) * 5.0;
     const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius - 4;
+    const z = Math.sin(angle) * radius - 3.5;
     // Keep front mission camera corridor and road completely clear
-    if (z > 0.2 && z < 9.5 && Math.abs(x) < 19) continue;
-    if (z > 6 && Math.abs(x) < 16) continue;
-    // Keep clear of background cottage footprints
-    if (z < -12 && z > -21 && Math.abs(x) < 20 && i % 3 === 0) continue;
+    if (z > -0.8 && z < 12 && Math.abs(x) < 22) continue;
+    if (z > 6.5 && Math.abs(x) < 20) continue;
+    // Keep safely clear of all 8 crescent truck garage house footprints
+    const nearAnyHouse = VEHICLES.some((v) => {
+      const dx = x - v.housePos[0];
+      const dz = z - v.housePos[2];
+      return dx * dx + dz * dz < 25;
+    });
+    if (nearAnyHouse) continue;
     treeCoords.push([x, z]);
   }
 
@@ -380,15 +388,29 @@ export function buildStorybookWorld(
   sides.computeBoundingSphere();
   group.add(trunks, crowns, tops, sides);
 
-  // Instanced Garden Bushes & Wildflower Tufts ringing the stone wall & meadow borders
+  // Instanced Garden Bushes & Wildflower Tufts tucked neatly between & behind the 8 garage cottages
   const bushCoords: [number, number][] = [];
-  for (let i = 0; i < 32; i++) {
-    const angle = (i / 32) * Math.PI * 2;
-    const rad = 12.6 + (i % 3) * 1.4;
+  for (let i = 0; i < 36; i++) {
+    const angle = (i / 36) * Math.PI * 2;
+    const rad = 19.2 + (i % 3) * 1.8;
     const bx = Math.cos(angle) * rad;
-    const bz = Math.sin(angle) * rad - 3.5;
-    if (bz > 0.2 && bz < 8.5 && Math.abs(bx) < 15) continue;
+    const bz = Math.sin(angle) * rad - 3.2;
+    if (bz > -0.5 && bz < 9.5 && Math.abs(bx) < 20) continue;
+    const nearHouse = VEHICLES.some((v) => {
+      const dx = bx - v.housePos[0];
+      const dz = bz - v.housePos[2];
+      return dx * dx + dz * dz < 14;
+    });
+    if (nearHouse) continue;
     bushCoords.push([bx, bz]);
+  }
+  // Also tuck cute flower bushes neatly between adjacent garage cottages along the crescent
+  for (let i = 0; i < VEHICLES.length - 1; i++) {
+    const a = VEHICLES[i].housePos;
+    const b = VEHICLES[i + 1].housePos;
+    const mx = (a[0] + b[0]) * 0.5;
+    const mz = (a[2] + b[2]) * 0.5;
+    bushCoords.push([mx, mz]);
   }
   const bushGeo = new THREE.SphereGeometry(0.46, 8, 7);
   bushGeo.scale(1.15, 0.72, 1.0);
@@ -427,34 +449,18 @@ export function buildStorybookWorld(
   blossoms.computeBoundingSphere();
   group.add(bushes, blossoms);
 
-  // Storybook Timber-and-Terracotta Village Cottages ringing the town backdrop
+  // 8 Color-Matched Open-Archway Storybook Garage Cottages (one dedicated home for each vehicle!)
   const terracottaRoofTex = createRoofShingleTexture('terracotta', maxAnisotropy);
   const slateRoofTex = createRoofShingleTexture('slate', maxAnisotropy);
   const stoneWallTex = createStoneWallTexture(maxAnisotropy);
   const woodTex = createWoodPlankTexture('#8E5D36', maxAnisotropy);
-
-  const cottageSpecs: {
-    x: number;
-    z: number;
-    wall: string;
-    timber: string;
-    roof: 'terracotta' | 'slate';
-    shutter: string;
-    rotY: number;
-    scale: number;
-  }[] = [
-    { x: -17.2, z: -13.2, wall: '#F6ECD7', timber: '#5E422E', roof: 'terracotta', shutter: '#588157', rotY: 0.58, scale: 1.05 },
-    { x: -11.4, z: -17.6, wall: '#F2DC9B', timber: '#634632', roof: 'terracotta', shutter: '#4F7797', rotY: 0.3, scale: 0.96 },
-    { x: -4.2, z: -19.2, wall: '#9BBBD4', timber: '#5B402D', roof: 'slate', shutter: '#C96A42', rotY: 0.1, scale: 1.02 },
-    { x: 4.5, z: -19.0, wall: '#F7EBD5', timber: '#5E422E', roof: 'terracotta', shutter: '#608556', rotY: -0.12, scale: 1.04 },
-    { x: 11.8, z: -17.2, wall: '#F3DFAA', timber: '#61442F', roof: 'terracotta', shutter: '#B85C3A', rotY: -0.34, scale: 0.95 },
-    { x: 17.5, z: -12.8, wall: '#EFE4CE', timber: '#5C402D', roof: 'terracotta', shutter: '#4F7797', rotY: -0.6, scale: 1.06 },
-  ];
+  const floorWoodTex = createWoodPlankTexture('#B68352', maxAnisotropy);
+  const drivewayTex = createCobblestoneTexture(maxAnisotropy, 2, 2);
 
   const winGlassMat = new THREE.MeshStandardMaterial({
     color: '#D4E9F7',
     emissive: '#FFE8B3',
-    emissiveIntensity: 0.18,
+    emissiveIntensity: 0.2,
     roughness: 0.25,
     metalness: 0.08,
   });
@@ -465,6 +471,25 @@ export function buildStorybookWorld(
   const doorMat = new THREE.MeshStandardMaterial({
     map: woodTex,
     roughness: 0.82,
+  });
+  const garageFloorMat = new THREE.MeshStandardMaterial({
+    map: floorWoodTex,
+    bumpMap: paperBump,
+    bumpScale: 0.025,
+    roughness: 0.86,
+  });
+  const drivewayMat = new THREE.MeshStandardMaterial({
+    map: drivewayTex,
+    bumpMap: paperBump,
+    bumpScale: 0.028,
+    roughness: 0.88,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const interiorBackMat = new THREE.MeshStandardMaterial({
+    color: '#E5D3B3',
+    roughness: 0.92,
   });
   const chimneyMat = new THREE.MeshStandardMaterial({
     map: stoneWallTex,
@@ -491,62 +516,116 @@ export function buildStorybookWorld(
     roughness: 0.8,
     metalness: 0.04,
   });
+  const lanternGlowMat = new THREE.MeshStandardMaterial({
+    color: '#FFF6D1',
+    emissive: '#F7C96B',
+    emissiveIntensity: 0.65,
+    roughness: 0.25,
+  });
+  const brassMat = new THREE.MeshStandardMaterial({
+    color: '#DFB150',
+    roughness: 0.35,
+    metalness: 0.55,
+  });
+  const plaqueCreamMat = new THREE.MeshStandardMaterial({
+    color: '#FFF9EC',
+    roughness: 0.65,
+  });
 
-  // Shared cottage geometries
-  const wallBoxGeo = new THREE.BoxGeometry(3.4, 2.55, 2.75);
-  // Gable pitched roof (triangular prism oriented cleanly over the cottage)
-  const roofShape = new THREE.Shape();
-  roofShape.moveTo(-2.05, 0);
-  roofShape.lineTo(2.05, 0);
-  roofShape.lineTo(0, 1.55);
-  roofShape.closePath();
-  const gableGeo = new THREE.ExtrudeGeometry(roofShape, {
-    depth: 3.1,
+  // Shared composite garage cottage geometries (generous interior: 2.66W x 3.35H x 4.4D)
+  const sideWallGeo = new THREE.BoxGeometry(0.36, 3.45, 4.7);
+  const backWallGeo = new THREE.BoxGeometry(3.38, 3.45, 0.36);
+  const floorDeckGeo = new THREE.BoxGeometry(3.26, 0.07, 4.66);
+  const drivewayGeo = new THREE.PlaneGeometry(2.9, 3.4);
+  const frontPillarGeo = new THREE.BoxGeometry(0.42, 3.45, 0.44);
+  const frontLintelGeo = new THREE.BoxGeometry(3.44, 0.52, 0.46);
+  const archCornerGeo = new THREE.BoxGeometry(0.55, 0.55, 0.32);
+
+  // Pitched Gable Pediment (front & rear triangle above y = 3.45)
+  const gableShape = new THREE.Shape();
+  gableShape.moveTo(-1.72, 0);
+  gableShape.lineTo(1.72, 0);
+  gableShape.lineTo(0, 1.48);
+  gableShape.closePath();
+  const gableGeo = new THREE.ExtrudeGeometry(gableShape, {
+    depth: 4.58,
     bevelEnabled: false,
   });
   gableGeo.center();
-  const roofSlopeGeo = new THREE.BoxGeometry(2.65, 0.16, 3.35);
-  const chimneyGeo = new THREE.BoxGeometry(0.55, 1.35, 0.55);
+
+  const roofSlopeGeo = new THREE.BoxGeometry(2.62, 0.18, 5.25);
+  const roofTrimGeo = new THREE.BoxGeometry(2.66, 0.14, 0.18);
+  const ridgeCapGeo = new THREE.BoxGeometry(0.26, 0.22, 5.34);
+  const chimneyGeo = new THREE.BoxGeometry(0.54, 1.38, 0.54);
   const chimneyPotGeo = new THREE.CylinderGeometry(0.11, 0.14, 0.34, 8);
-  const doorGeo = new THREE.BoxGeometry(0.68, 1.18, 0.14);
-  const porchRoofGeo = new THREE.BoxGeometry(1.06, 0.12, 0.62);
-  const winPaneGeo = new THREE.BoxGeometry(0.64, 0.64, 0.1);
-  const winFrameGeo = new THREE.BoxGeometry(0.74, 0.74, 0.08);
-  const shutterGeo = new THREE.BoxGeometry(0.22, 0.68, 0.08);
-  const flowerBoxGeo = new THREE.BoxGeometry(0.78, 0.18, 0.22);
-  const flowerPuffGeo = new THREE.SphereGeometry(0.13, 7, 6);
+  const plaqueRimGeo = new THREE.CylinderGeometry(0.46, 0.46, 0.1, 18);
+  const plaqueFaceGeo = new THREE.CylinderGeometry(0.37, 0.37, 0.12, 18);
+  const plaqueDotGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.14, 16);
+  const sideWinFrameGeo = new THREE.BoxGeometry(0.1, 0.72, 0.78);
+  const sideWinPaneGeo = new THREE.BoxGeometry(0.12, 0.62, 0.68);
+  const sideShutterGeo = new THREE.BoxGeometry(0.08, 0.68, 0.22);
+  const sideFlowerBoxGeo = new THREE.BoxGeometry(0.22, 0.18, 0.82);
+  const flowerPuffGeo = new THREE.SphereGeometry(0.12, 7, 6);
+  const lanternBulbGeo = new THREE.SphereGeometry(0.15, 10, 8);
+  const lanternCapGeo = new THREE.ConeGeometry(0.2, 0.16, 8);
 
   disposables.push(
+    terracottaRoofTex,
+    slateRoofTex,
+    stoneWallTex,
+    woodTex,
+    floorWoodTex,
+    drivewayTex,
     winGlassMat,
     oakFrameMat,
     doorMat,
+    garageFloorMat,
+    drivewayMat,
+    interiorBackMat,
     chimneyMat,
     flowerBoxMat,
     flowerRedMat,
     flowerGoldMat,
     terracottaRoofMat,
     slateRoofMat,
-    wallBoxGeo,
+    lanternGlowMat,
+    brassMat,
+    plaqueCreamMat,
+    sideWallGeo,
+    backWallGeo,
+    floorDeckGeo,
+    drivewayGeo,
+    frontPillarGeo,
+    frontLintelGeo,
+    archCornerGeo,
     gableGeo,
     roofSlopeGeo,
+    roofTrimGeo,
+    ridgeCapGeo,
     chimneyGeo,
     chimneyPotGeo,
-    doorGeo,
-    porchRoofGeo,
-    winPaneGeo,
-    winFrameGeo,
-    shutterGeo,
-    flowerBoxGeo,
+    plaqueRimGeo,
+    plaqueFaceGeo,
+    plaqueDotGeo,
+    sideWinFrameGeo,
+    sideWinPaneGeo,
+    sideShutterGeo,
+    sideFlowerBoxGeo,
     flowerPuffGeo,
+    lanternBulbGeo,
+    lanternCapGeo,
   );
 
-  for (const c of cottageSpecs) {
-    const house = new THREE.Group();
-    house.position.set(c.x, 0, c.z);
-    house.rotation.y = c.rotY;
-    house.scale.setScalar(c.scale);
+  const garageHouses: THREE.Group[] = [];
+  const wallTints = ['#F7EEDB', '#F4E5C8', '#EFE6D2', '#F7ECDA', '#F5E4C3', '#F7EBD5', '#EDF0DC', '#F8EED2'];
 
-    const wallTex = createCottageWallTexture(c.wall, c.timber, maxAnisotropy);
+  VEHICLES.forEach((v, idx) => {
+    const house = new THREE.Group();
+    house.position.set(...v.housePos);
+    house.rotation.y = v.houseRotY;
+    house.userData.vehicleId = v.id;
+
+    const wallTex = createCottageWallTexture(wallTints[idx % wallTints.length], '#5E422E', maxAnisotropy);
     const wallMat = new THREE.MeshStandardMaterial({
       map: wallTex,
       bumpMap: paperBump,
@@ -554,90 +633,187 @@ export function buildStorybookWorld(
       roughness: 0.88,
       metalness: 0.0,
     });
-    const shutterMat = new THREE.MeshStandardMaterial({
-      color: c.shutter,
-      roughness: 0.8,
+    const accentTex = createGouachePaintTexture(v.accentHex, maxAnisotropy);
+    const accentMat = new THREE.MeshStandardMaterial({
+      map: accentTex,
+      bumpMap: paperBump,
+      bumpScale: 0.022,
+      roughness: 0.62,
+      metalness: 0.04,
     });
-    disposables.push(wallMat, shutterMat);
+    const accentDarkMat = new THREE.MeshStandardMaterial({
+      color: v.accentDarkHex,
+      roughness: 0.72,
+    });
+    disposables.push(wallTex, wallMat, accentTex, accentMat, accentDarkMat);
 
-    const wall = new THREE.Mesh(wallBoxGeo, wallMat);
-    wall.position.y = 1.275;
-    wall.castShadow = !isSoftwareGl;
-    wall.receiveShadow = true;
-    house.add(wall);
+    // Warm oak interior garage floorboards + cobblestone driveway apron connecting out to plaza
+    const floorDeck = new THREE.Mesh(floorDeckGeo, garageFloorMat);
+    floorDeck.position.set(0, 0.035, 0);
+    floorDeck.receiveShadow = true;
+    house.add(floorDeck);
 
-    // Gable end fill + pitched terracotta/slate shingled roof slopes
+    const driveway = new THREE.Mesh(drivewayGeo, drivewayMat);
+    driveway.rotation.x = -Math.PI / 2;
+    driveway.position.set(0, 0.026, 4.0);
+    driveway.receiveShadow = true;
+    house.add(driveway);
+
+    // Left, Right & Rear timber-and-plaster walls (open front archway faces +Z!)
+    const leftWall = new THREE.Mesh(sideWallGeo, wallMat);
+    leftWall.position.set(-1.51, 1.725, 0);
+    leftWall.castShadow = !isSoftwareGl;
+    leftWall.receiveShadow = true;
+    house.add(leftWall);
+
+    const rightWall = new THREE.Mesh(sideWallGeo, wallMat);
+    rightWall.position.set(1.51, 1.725, 0);
+    rightWall.castShadow = !isSoftwareGl;
+    rightWall.receiveShadow = true;
+    house.add(rightWall);
+
+    const backWall = new THREE.Mesh(backWallGeo, wallMat);
+    backWall.position.set(0, 1.725, -2.18);
+    backWall.castShadow = !isSoftwareGl;
+    backWall.receiveShadow = true;
+    house.add(backWall);
+
+    // Cozy warm plaster interior back panel so inside bay stays bright & readable
+    const innerBack = new THREE.Mesh(new THREE.PlaneGeometry(2.68, 3.25), interiorBackMat);
+    innerBack.position.set(0, 1.68, -1.99);
+    house.add(innerBack);
+    disposables.push(innerBack.geometry);
+
+    // Open Wooden Archway Portal on Front (+Z = +2.32) with color-matched timber trim
+    for (const px of [-1.48, 1.48]) {
+      const pillar = new THREE.Mesh(frontPillarGeo, oakFrameMat);
+      pillar.position.set(px, 1.725, 2.32);
+      pillar.castShadow = !isSoftwareGl;
+      house.add(pillar);
+
+      // Painted accent plinth block at base of each archway post
+      const plinth = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.56, 0.5), accentMat);
+      plinth.position.set(px, 0.28, 2.32);
+      house.add(plinth);
+      disposables.push(plinth.geometry);
+    }
+
+    // Upper lintel beam & chamfered corner brackets forming an inviting storybook archway
+    const lintel = new THREE.Mesh(frontLintelGeo, accentMat);
+    lintel.position.set(0, 3.28, 2.32);
+    lintel.castShadow = !isSoftwareGl;
+    house.add(lintel);
+
+    for (const sx of [-1, 1]) {
+      const corbel = new THREE.Mesh(archCornerGeo, oakFrameMat);
+      corbel.position.set(sx * 1.15, 2.95, 2.32);
+      corbel.rotation.z = sx * 0.78;
+      house.add(corbel);
+    }
+
+    // Warm brass porch lantern tucked inside top-center of archway
+    const lanternCap = new THREE.Mesh(lanternCapGeo, brassMat);
+    lanternCap.position.set(0, 2.96, 2.48);
+    const lanternBulb = new THREE.Mesh(lanternBulbGeo, lanternGlowMat);
+    lanternBulb.position.set(0, 2.82, 2.48);
+    house.add(lanternCap, lanternBulb);
+
+    // Gable end fill + steep shingled roof slopes + color-matched front fascia trim
     const gable = new THREE.Mesh(gableGeo, wallMat);
-    gable.position.y = 3.25;
-    gable.scale.set(0.84, 0.92, 0.88);
+    gable.position.set(0, 4.18, 0);
     house.add(gable);
 
-    const rMat = c.roof === 'terracotta' ? terracottaRoofMat : slateRoofMat;
-    const leftSlope = new THREE.Mesh(roofSlopeGeo, rMat);
-    leftSlope.position.set(-1.02, 3.22, 0);
-    leftSlope.rotation.z = 0.64;
+    const roofMat = v.id === 'tangki' || v.id === 'angkut' ? slateRoofMat : terracottaRoofMat;
+    const leftSlope = new THREE.Mesh(roofSlopeGeo, roofMat);
+    leftSlope.position.set(-1.08, 4.15, 0.08);
+    leftSlope.rotation.z = 0.68;
     leftSlope.castShadow = !isSoftwareGl;
     leftSlope.receiveShadow = true;
     house.add(leftSlope);
 
-    const rightSlope = new THREE.Mesh(roofSlopeGeo, rMat);
-    rightSlope.position.set(1.02, 3.22, 0);
-    rightSlope.rotation.z = -0.64;
+    const rightSlope = new THREE.Mesh(roofSlopeGeo, roofMat);
+    rightSlope.position.set(1.08, 4.15, 0.08);
+    rightSlope.rotation.z = -0.68;
     rightSlope.castShadow = !isSoftwareGl;
     rightSlope.receiveShadow = true;
     house.add(rightSlope);
 
-    // Stone chimney + terracotta chimney pot
+    // Color-matched painted bargeboard trim along the front roof gable!
+    const trimL = new THREE.Mesh(roofTrimGeo, accentMat);
+    trimL.position.set(-1.08, 4.14, 2.66);
+    trimL.rotation.z = 0.68;
+    house.add(trimL);
+
+    const trimR = new THREE.Mesh(roofTrimGeo, accentMat);
+    trimR.position.set(1.08, 4.14, 2.66);
+    trimR.rotation.z = -0.68;
+    house.add(trimR);
+
+    const ridgeCap = new THREE.Mesh(ridgeCapGeo, accentDarkMat);
+    ridgeCap.position.set(0, 5.04, 0.08);
+    house.add(ridgeCap);
+
+    // Color-matched circular crest medallion centered in the front gable above the archway
+    const plaqueRim = new THREE.Mesh(plaqueRimGeo, accentDarkMat);
+    plaqueRim.rotation.x = Math.PI / 2;
+    plaqueRim.position.set(0, 4.02, 2.34);
+    const plaqueFace = new THREE.Mesh(plaqueFaceGeo, plaqueCreamMat);
+    plaqueFace.rotation.x = Math.PI / 2;
+    plaqueFace.position.set(0, 4.02, 2.36);
+    const plaqueDot = new THREE.Mesh(plaqueDotGeo, accentMat);
+    plaqueDot.rotation.x = Math.PI / 2;
+    plaqueDot.position.set(0, 4.02, 2.38);
+    house.add(plaqueRim, plaqueFace, plaqueDot);
+
+    // Stone chimney + terracotta pot on alternating roof sides for organic village charm
+    const chimSide = idx % 2 === 0 ? 1.05 : -1.05;
     const chimney = new THREE.Mesh(chimneyGeo, chimneyMat);
-    chimney.position.set(1.05, 3.82, -0.55);
+    chimney.position.set(chimSide, 4.78, -0.85);
     chimney.castShadow = !isSoftwareGl;
     house.add(chimney);
 
     const pot = new THREE.Mesh(chimneyPotGeo, terracottaRoofMat);
-    pot.position.set(1.05, 4.62, -0.55);
+    pot.position.set(chimSide, 5.56, -0.85);
     house.add(pot);
 
-    // Warm oak door + cute pitched porch hood
-    const door = new THREE.Mesh(doorGeo, doorMat);
-    door.position.set(0, 0.62, 1.38);
-    house.add(door);
-
-    const porchHood = new THREE.Mesh(porchRoofGeo, rMat);
-    porchHood.position.set(0, 1.38, 1.62);
-    porchHood.rotation.x = 0.34;
-    house.add(porchHood);
-
-    // Shuttered windows + flower boxes bursting with blossoms
-    for (const wx of [-1.02, 1.02]) {
-      const frame = new THREE.Mesh(winFrameGeo, oakFrameMat);
-      frame.position.set(wx, 1.56, 1.37);
+    // Shuttered storybook windows + flower boxes on both side walls
+    for (const side of [-1, 1]) {
+      const wx = side * 1.7;
+      const frame = new THREE.Mesh(sideWinFrameGeo, oakFrameMat);
+      frame.position.set(wx, 1.92, 0.15);
       house.add(frame);
 
-      const pane = new THREE.Mesh(winPaneGeo, winGlassMat);
-      pane.position.set(wx, 1.56, 1.39);
+      const pane = new THREE.Mesh(sideWinPaneGeo, winGlassMat);
+      pane.position.set(wx + side * 0.01, 1.92, 0.15);
       house.add(pane);
 
-      const shL = new THREE.Mesh(shutterGeo, shutterMat);
-      shL.position.set(wx - 0.46, 1.56, 1.39);
-      const shR = new THREE.Mesh(shutterGeo, shutterMat);
-      shR.position.set(wx + 0.46, 1.56, 1.39);
-      house.add(shL, shR);
+      for (const sz of [-0.48, 0.48]) {
+        const shutter = new THREE.Mesh(sideShutterGeo, accentMat);
+        shutter.position.set(wx + side * 0.02, 1.92, 0.15 + sz);
+        house.add(shutter);
+      }
 
-      const box = new THREE.Mesh(flowerBoxGeo, flowerBoxMat);
-      box.position.set(wx, 1.14, 1.48);
-      house.add(box);
+      const fbox = new THREE.Mesh(sideFlowerBoxGeo, flowerBoxMat);
+      fbox.position.set(wx + side * 0.08, 1.46, 0.15);
+      house.add(fbox);
 
       for (let f = -1; f <= 1; f++) {
         const fl = new THREE.Mesh(flowerPuffGeo, f === 0 ? flowerGoldMat : flowerRedMat);
-        fl.position.set(wx + f * 0.22, 1.28, 1.49);
+        fl.position.set(wx + side * 0.1, 1.62, 0.15 + f * 0.24);
         house.add(fl);
       }
     }
 
-    group.add(house);
-  }
+    // Tag all child meshes so raycasting any part of the garage house identifies this truck!
+    house.traverse((obj) => {
+      obj.userData.vehicleId = v.id;
+    });
 
-  // Low Dry-Stone Village Garden Wall Segments framing the back meadow
+    group.add(house);
+    garageHouses.push(house);
+  });
+
+  // Low Dry-Stone Village Garden Wall Segments framing the outer flanks behind the crescent
   const stoneWallMat = new THREE.MeshStandardMaterial({
     map: stoneWallTex,
     bumpMap: paperBump,
@@ -649,10 +825,8 @@ export function buildStorybookWorld(
   disposables.push(stoneWallMat, wallSegGeo, wallCapGeo);
 
   const stoneWalls: [number, number, number][] = [
-    [-12.6, -9.8, 0.72],
-    [-8.6, -13.4, 0.35],
-    [8.8, -13.2, -0.35],
-    [12.8, -9.6, -0.72],
+    [-20.5, -3.0, 1.1],
+    [20.5, -3.0, -1.1],
   ];
   for (const [wx, wz, wy] of stoneWalls) {
     const seg = new THREE.Group();
@@ -668,10 +842,10 @@ export function buildStorybookWorld(
     group.add(seg);
   }
 
-  // Cozy Village Market Stalls with Striped Canvas Awnings (placed safely behind plaza arc)
+  // Cozy Village Market Stalls with Striped Canvas Awnings tucked cleanly at outer village flanks
   const stallSpecs: { x: number; z: number; rotY: number; stripe: string }[] = [
-    { x: -11.4, z: -6.8, rotY: 0.85, stripe: '#D2573E' },
-    { x: 11.6, z: -6.6, rotY: -0.88, stripe: '#428A96' },
+    { x: -18.8, z: -0.4, rotY: 0.95, stripe: '#D2573E' },
+    { x: 18.8, z: -0.4, rotY: -0.95, stripe: '#428A96' },
   ];
   const stallPostGeo = new THREE.CylinderGeometry(0.06, 0.07, 1.95, 8);
   const stallCounterGeo = new THREE.BoxGeometry(2.1, 0.82, 0.95);
@@ -707,7 +881,7 @@ export function buildStorybookWorld(
       map: awningTex,
       roughness: 0.86,
     });
-    disposables.push(awningMat);
+    disposables.push(awningTex, awningMat);
     const awning = new THREE.Mesh(stallAwningGeo, awningMat);
     awning.position.set(0, 1.98, 0.08);
     awning.rotation.x = 0.24;
@@ -728,7 +902,7 @@ export function buildStorybookWorld(
     group.add(stall);
   }
 
-  // Vintage Village Iron-and-Brass Street Lamps flanking the cobblestone plaza
+  // Vintage Village Iron-and-Brass Street Lamps framing the plaza perimeter cleanly clear of driveways
   const lampIronMat = new THREE.MeshStandardMaterial({
     color: '#3B3632',
     roughness: 0.58,
@@ -747,10 +921,10 @@ export function buildStorybookWorld(
   disposables.push(lampIronMat, lampGlowMat, lampPostGeo, lampBaseGeo, lampGlobeGeo, lampCapGeo);
 
   const lampPositions: [number, number][] = [
-    [-10.6, -0.6],
-    [10.6, -0.6],
-    [-8.9, -11.4],
-    [8.9, -11.4],
+    [-14.6, 0.4],
+    [14.6, 0.4],
+    [-6.0, -14.8],
+    [6.0, -14.8],
   ];
   for (const [lx, lz] of lampPositions) {
     const lamp = new THREE.Group();
@@ -821,6 +995,7 @@ export function buildStorybookWorld(
   return {
     group,
     clouds,
+    garageHouses,
     sunLight,
     dispose: () => {
       scene.remove(group);

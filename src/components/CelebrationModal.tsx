@@ -1,11 +1,22 @@
-import { ArrowRight, Home, RotateCcw, Star } from 'lucide-react';
-import { pickLang, VEHICLE_MAP, VEHICLES, type LanguageMode, type VehicleId } from '../types/game';
+import { ArrowRight, Home, RotateCcw, Sparkles, Star } from 'lucide-react';
+import {
+  MISSION_VARIANT_META,
+  hasBonusMission,
+  pickLang,
+  VEHICLE_MAP,
+  VEHICLES,
+  type LanguageMode,
+  type MissionVariant,
+  type VehicleId,
+} from '../types/game';
 import { TruckIllustration } from './TruckIllustration';
 
 interface CelebrationModalProps {
   vehicleId: VehicleId;
+  missionVariant?: MissionVariant;
   languageMode: LanguageMode;
   onPlayAgain: () => void;
+  onTryBonusMission?: () => void;
   onNextTruck: (nextVehicleId: VehicleId) => void;
   onBackToGarage: () => void;
 }
@@ -49,8 +60,10 @@ const CONFETTI_PARTICLES = [
 
 export function CelebrationModal({
   vehicleId,
+  missionVariant = 'classic',
   languageMode,
   onPlayAgain,
+  onTryBonusMission,
   onNextTruck,
   onBackToGarage,
 }: CelebrationModalProps) {
@@ -58,6 +71,12 @@ export function CelebrationModal({
   const nextVehicleId = getNextVehicleId(vehicleId);
   const nextVehicle = VEHICLE_MAP[nextVehicleId];
   const nextTruckName = languageMode === 'en' ? nextVehicle.nameEn : nextVehicle.nameId;
+  const bonusMeta = MISSION_VARIANT_META[vehicleId];
+  const showBonusPrompt =
+    Boolean(onTryBonusMission) &&
+    hasBonusMission(vehicleId) &&
+    missionVariant === 'classic' &&
+    Boolean(bonusMeta);
 
   return (
     <div
@@ -79,7 +98,7 @@ export function CelebrationModal({
         ))}
       </div>
 
-      <div className="animate-pop-in storybook-paper relative z-10 max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl p-5 text-center sm:p-6">
+      <div className="animate-pop-in storybook-paper relative z-10 max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-3xl p-4 text-center sm:p-6">
         <div className="mx-auto flex items-center justify-center gap-2">
           <Star className="h-8 w-8 fill-amber-400 text-amber-600 sm:h-9 sm:w-9" />
           <Star className="h-11 w-11 fill-amber-400 text-amber-600 -mt-2 sm:h-12 sm:w-12 sm:-mt-2.5" />
@@ -114,8 +133,23 @@ export function CelebrationModal({
           )}
         </p>
 
-        {/* Primary "Next Truck" shortcut for continuous toddler play */}
+        {/* Primary actions: Bonus Mission 2 (if Classic) & Next Truck shortcut */}
         <div className="mt-4 flex flex-col gap-2.5">
+          {showBonusPrompt && bonusMeta && onTryBonusMission && (
+            <button
+              type="button"
+              onClick={onTryBonusMission}
+              className="btn-tactile flex min-h-[50px] w-full items-center justify-center gap-2 rounded-2xl bg-[#D97706] px-4 text-sm font-extrabold text-white whitespace-nowrap cursor-pointer"
+            >
+              <Sparkles className="h-4 w-4 shrink-0" />
+              <span>
+                {languageMode === 'en'
+                  ? `Try Bonus Mission: ${bonusMeta.bonusEn}`
+                  : `Coba Misi 2: ${bonusMeta.bonusId}`}
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => onNextTruck(nextVehicleId)}

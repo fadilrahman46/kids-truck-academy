@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import type { CargoTypeId, VehicleId, WasteKind } from '../types/game';
+import {
+  SHAPE_MAP,
+  type CargoTypeId,
+  type ShapeId,
+  type VehicleId,
+  type WasteKind,
+} from '../types/game';
 import {
   createBrickTexture,
   createContactShadowTexture,
@@ -23,17 +29,24 @@ export interface TruckRig {
   cargoSlot?: THREE.Group;
   // Tangki specific
   waterFillMesh?: THREE.Mesh;
-  // Crane specific
+  // Crane & Excavator shared turret
   turretGroup?: THREE.Group;
   boomGroup?: THREE.Group;
   cableMesh?: THREE.Mesh;
   hookGroup?: THREE.Group;
+  // Excavator specific
+  armBaseGroup?: THREE.Group;
+  armForeGroup?: THREE.Group;
+  bucketGroup?: THREE.Group;
   // Pemadam specific
   sirenLeftMat?: THREE.MeshStandardMaterial;
   sirenRightMat?: THREE.MeshStandardMaterial;
   nozzleGroup?: THREE.Group;
   // Sampah specific
   hopperGroup?: THREE.Group;
+  // School Bus specific
+  stopSignGroup?: THREE.Group;
+  busBeaconMat?: THREE.MeshStandardMaterial;
 }
 
 let sharedShadowTex: THREE.CanvasTexture | null = null;
@@ -821,6 +834,417 @@ export function buildTruck(vehicleId: VehicleId, maxAnisotropy: number): TruckRi
     hopperGroup.add(hopperShell);
 
     rig.hopperGroup = hopperGroup;
+  } else if (vehicleId === 'ekskavator') {
+    // Soft warm sepia contact shadow directly under excavator at y = 0.035
+    const shadowPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(4.4, 2.7),
+      new THREE.MeshBasicMaterial({
+        map: getShadowTexture(),
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.58,
+      }),
+    );
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.position.y = 0.035;
+    root.add(shadowPlane);
+
+    const trackMat = new THREE.MeshStandardMaterial({
+      color: '#3C3632',
+      bumpMap: paperBump,
+      bumpScale: 0.025,
+      roughness: 0.88,
+      metalness: 0.08,
+    });
+    const ironMat = new THREE.MeshStandardMaterial({
+      color: '#524943',
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.65,
+      metalness: 0.32,
+    });
+    const orangeMat = makeGouacheMat('#E06324', maxAnisotropy, { roughness: 0.54, metalness: 0.06 });
+    const creamMat = makeGouacheMat('#FAF0D6', maxAnisotropy, { roughness: 0.58, metalness: 0.04 });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: '#E5B958',
+      roughness: 0.34,
+      metalness: 0.56,
+    });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: '#C7E5F5',
+      emissive: '#FFF5DA',
+      emissiveIntensity: 0.08,
+      roughness: 0.18,
+      metalness: 0.1,
+    });
+    const headlightMat = new THREE.MeshStandardMaterial({
+      color: '#FFF4C2',
+      emissive: '#FDE073',
+      emissiveIntensity: 0.45,
+      roughness: 0.24,
+    });
+
+    // Twin caterpillar tracks resting flush at y = 0
+    for (const tz of [-0.76, 0.76]) {
+      const trackPod = new THREE.Mesh(makeRoundedBox(2.85, 0.68, 0.46, 0.28), trackMat);
+      trackPod.position.set(-0.15, 0.35, tz);
+      trackPod.castShadow = true;
+      trackPod.receiveShadow = true;
+      root.add(trackPod);
+
+      for (const rx of [-1.15, -0.48, 0.18, 0.85]) {
+        const roller = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.5, 14), ironMat);
+        roller.rotation.x = Math.PI / 2;
+        roller.position.set(rx, 0.35, tz);
+        root.add(roller);
+        wheels.push(roller);
+
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.53, 10), brassMat);
+        cap.rotation.x = Math.PI / 2;
+        cap.position.set(rx, 0.35, tz);
+        root.add(cap);
+      }
+    }
+
+    // Undercarriage bridge & swivel ring
+    const axleBridge = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.28, 1.3), ironMat);
+    axleBridge.position.set(-0.15, 0.5, 0);
+    axleBridge.castShadow = true;
+    root.add(axleBridge);
+
+    const swivelRing = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.74, 0.22, 18), ironMat);
+    swivelRing.position.set(-0.15, 0.74, 0);
+    bodyGroup.add(swivelRing);
+
+    // Rotating upper turret + cab + articulated boom (+X forward)
+    const turretGroup = new THREE.Group();
+    turretGroup.position.set(-0.15, 0.84, 0);
+    bodyGroup.add(turretGroup);
+
+    const deck = new THREE.Mesh(makeRoundedBox(2.25, 0.55, 1.54, 0.16), orangeMat);
+    deck.position.set(-0.12, 0.32, 0);
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    turretGroup.add(deck);
+
+    // Rear counterweight with cream accent stripe
+    const counterweight = new THREE.Mesh(makeRoundedBox(0.74, 0.76, 1.52, 0.18), orangeMat);
+    counterweight.position.set(-1.05, 0.62, 0);
+    counterweight.castShadow = true;
+    turretGroup.add(counterweight);
+
+    const rearBand = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.16, 1.56), creamMat);
+    rearBand.position.set(-1.05, 0.48, 0);
+    turretGroup.add(rearBand);
+
+    // Cozy rounded storybook cabin on +Z side of deck
+    const cab = new THREE.Mesh(makeRoundedBox(1.26, 1.28, 0.96, 0.2), orangeMat);
+    cab.position.set(0.16, 1.08, 0.26);
+    cab.castShadow = true;
+    cab.receiveShadow = true;
+    turretGroup.add(cab);
+
+    const frontWin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.66, 0.76), glassMat);
+    frontWin.position.set(0.78, 1.24, 0.26);
+    turretGroup.add(frontWin);
+
+    const sideWin = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.62, 1.0), glassMat);
+    sideWin.position.set(0.18, 1.24, 0.26);
+    turretGroup.add(sideWin);
+
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.98), creamMat);
+    visor.position.set(0.84, 1.66, 0.26);
+    visor.rotation.z = -0.18;
+    turretGroup.add(visor);
+
+    // Vintage brass roof horn + exhaust stack
+    const hornTube = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.13, 0.32, 12), brassMat);
+    hornTube.rotation.z = Math.PI / 2;
+    hornTube.position.set(0.22, 1.82, 0.26);
+    turretGroup.add(hornTube);
+
+    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.78, 10), ironMat);
+    exhaust.position.set(-0.78, 1.24, -0.45);
+    turretGroup.add(exhaust);
+
+    // Friendly brass headlight eyes on the front deck
+    for (const hz of [-0.14, 0.56]) {
+      const bezel = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.1, 14), brassMat);
+      bezel.rotation.z = Math.PI / 2;
+      bezel.position.set(0.98, 0.44, hz);
+      turretGroup.add(bezel);
+      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.12, 14), headlightMat);
+      lamp.rotation.z = Math.PI / 2;
+      lamp.position.set(1.0, 0.44, hz);
+      turretGroup.add(lamp);
+      const pupil = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.14, 10), trackMat);
+      pupil.rotation.z = Math.PI / 2;
+      pupil.position.set(1.01, 0.44, hz);
+      turretGroup.add(pupil);
+    }
+
+    // Articulated Two-Joint Digging Boom & Bucket mounted on -Z side of cab
+    const armBaseGroup = new THREE.Group();
+    armBaseGroup.position.set(0.62, 0.56, -0.44);
+    turretGroup.add(armBaseGroup);
+
+    const boomLower = new THREE.Mesh(makeRoundedBox(1.85, 0.3, 0.26, 0.08), orangeMat);
+    boomLower.position.set(0.72, 0.68, 0);
+    boomLower.rotation.z = 0.72;
+    boomLower.castShadow = true;
+    armBaseGroup.add(boomLower);
+
+    const hydro1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.25, 10), brassMat);
+    hydro1.position.set(0.45, 0.68, 0);
+    hydro1.rotation.z = -0.82;
+    armBaseGroup.add(hydro1);
+
+    const jointPin1 = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.34, 12), ironMat);
+    jointPin1.rotation.x = Math.PI / 2;
+    jointPin1.position.set(1.38, 1.32, 0);
+    armBaseGroup.add(jointPin1);
+
+    const armForeGroup = new THREE.Group();
+    armForeGroup.position.set(1.38, 1.32, 0);
+    armBaseGroup.add(armForeGroup);
+
+    const foreStick = new THREE.Mesh(makeRoundedBox(0.24, 1.55, 0.24, 0.06), orangeMat);
+    foreStick.position.set(0.35, -0.62, 0);
+    foreStick.rotation.z = 0.48;
+    foreStick.castShadow = true;
+    armForeGroup.add(foreStick);
+
+    const hydro2 = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.96, 10), brassMat);
+    hydro2.position.set(0.15, -0.35, 0);
+    hydro2.rotation.z = 0.32;
+    armForeGroup.add(hydro2);
+
+    const bucketGroup = new THREE.Group();
+    bucketGroup.position.set(0.66, -1.24, 0);
+    armForeGroup.add(bucketGroup);
+
+    const bucketBack = new THREE.Mesh(makeRoundedBox(0.56, 0.52, 0.66, 0.1), ironMat);
+    bucketBack.position.set(0.1, -0.18, 0);
+    bucketBack.castShadow = true;
+    bucketGroup.add(bucketBack);
+
+    const bucketScoop = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.12, 0.66), ironMat);
+    bucketScoop.position.set(-0.08, -0.44, 0);
+    bucketScoop.rotation.z = 0.22;
+    bucketScoop.castShadow = true;
+    bucketGroup.add(bucketScoop);
+
+    for (const tz of [-0.24, -0.08, 0.08, 0.24]) {
+      const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.18, 6), brassMat);
+      tooth.rotation.z = Math.PI / 2 + 0.2;
+      tooth.position.set(-0.42, -0.48, tz);
+      bucketGroup.add(tooth);
+    }
+
+    rig.turretGroup = turretGroup;
+    rig.armBaseGroup = armBaseGroup;
+    rig.armForeGroup = armForeGroup;
+    rig.bucketGroup = bucketGroup;
+  } else if (vehicleId === 'bus') {
+    // Soft warm sepia contact shadow directly under school bus at y = 0.035
+    const shadowPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(4.8, 2.65),
+      new THREE.MeshBasicMaterial({
+        map: getShadowTexture(),
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.58,
+      }),
+    );
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.position.y = 0.035;
+    root.add(shadowPlane);
+
+    const yellowMat = makeGouacheMat('#F1B825', maxAnisotropy, { roughness: 0.54, metalness: 0.05 });
+    const creamRoofMat = makeGouacheMat('#FFF6DE', maxAnisotropy, { roughness: 0.56, metalness: 0.04 });
+    const sepiaMat = new THREE.MeshStandardMaterial({
+      color: '#463529',
+      bumpMap: paperBump,
+      bumpScale: 0.02,
+      roughness: 0.76,
+      metalness: 0.14,
+    });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: '#C7E5F5',
+      emissive: '#FFF5DA',
+      emissiveIntensity: 0.1,
+      roughness: 0.18,
+      metalness: 0.1,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: '#E5BA58',
+      roughness: 0.34,
+      metalness: 0.56,
+    });
+    const creamMetalMat = new THREE.MeshStandardMaterial({
+      color: '#F2E7D3',
+      bumpMap: paperBump,
+      bumpScale: 0.012,
+      roughness: 0.4,
+      metalness: 0.38,
+    });
+    const headlightMat = new THREE.MeshStandardMaterial({
+      color: '#FFF4C2',
+      emissive: '#FDE073',
+      emissiveIntensity: 0.45,
+      roughness: 0.24,
+    });
+    const busBeaconMat = new THREE.MeshStandardMaterial({
+      color: '#F59E0B',
+      emissive: '#F59E0B',
+      emissiveIntensity: 0.5,
+      roughness: 0.24,
+    });
+
+    // Chassis base
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.3, 1.5), sepiaMat);
+    chassis.position.set(0.02, 0.56, 0);
+    chassis.castShadow = true;
+    chassis.receiveShadow = true;
+    bodyGroup.add(chassis);
+
+    // Classic rounded sunflower-yellow school bus coach body
+    const coach = new THREE.Mesh(makeRoundedBox(3.55, 1.48, 1.56, 0.26), yellowMat);
+    coach.position.set(-0.22, 1.44, 0);
+    coach.castShadow = true;
+    coach.receiveShadow = true;
+    bodyGroup.add(coach);
+
+    // Soft cream roof cap
+    const roofCap = new THREE.Mesh(makeRoundedBox(3.32, 0.22, 1.44, 0.12), creamRoofMat);
+    roofCap.position.set(-0.22, 2.2, 0);
+    bodyGroup.add(roofCap);
+
+    // Vintage bus engine hood nose (+X)
+    const hood = new THREE.Mesh(makeRoundedBox(0.72, 0.78, 1.42, 0.18), yellowMat);
+    hood.position.set(1.76, 1.08, 0);
+    hood.castShadow = true;
+    bodyGroup.add(hood);
+
+    // Dark-sepia school bus side stripe
+    const sideBand = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.16, 1.62), sepiaMat);
+    sideBand.position.set(-0.22, 1.12, 0);
+    bodyGroup.add(sideBand);
+
+    // Rounded wheel-arch fenders
+    const fenderGeo = new THREE.CylinderGeometry(0.52, 0.52, 0.24, 14, 1, false, 0, Math.PI);
+    for (const fx of [1.26, -1.16]) {
+      for (const sz of [-0.76, 0.76]) {
+        const fender = new THREE.Mesh(fenderGeo, yellowMat);
+        fender.rotation.x = Math.PI / 2;
+        fender.rotation.y = Math.PI / 2;
+        fender.position.set(fx, 0.5, sz);
+        bodyGroup.add(fender);
+      }
+    }
+
+    // Front panoramic windshield + 4 storybook passenger windows on each side
+    const windshield = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.6, 1.32), glassMat);
+    windshield.position.set(1.54, 1.68, 0);
+    windshield.rotation.z = 0.1;
+    bodyGroup.add(windshield);
+
+    for (const wx of [-1.45, -0.75, -0.05, 0.65]) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.54, 1.63), glassMat);
+      win.position.set(wx, 1.66, 0);
+      bodyGroup.add(win);
+    }
+
+    // Front amber roof marker lights
+    for (const lz of [-0.46, 0.46]) {
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 10), busBeaconMat);
+      light.position.set(1.48, 2.14, lz);
+      bodyGroup.add(light);
+    }
+
+    // Cream bumper + friendly brass headlight eyes + smiling slatted grille
+    const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, 1.68), creamMetalMat);
+    bumper.position.set(2.14, 0.66, 0);
+    bodyGroup.add(bumper);
+
+    const rearBumper = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 1.66), creamMetalMat);
+    rearBumper.position.set(-2.04, 0.66, 0);
+    bodyGroup.add(rearBumper);
+
+    for (const side of [-0.46, 0.46]) {
+      const bezel = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.1, 14), brassMat);
+      bezel.rotation.z = Math.PI / 2;
+      bezel.position.set(2.1, 1.06, side);
+      bodyGroup.add(bezel);
+      const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.12, 14), headlightMat);
+      lamp.rotation.z = Math.PI / 2;
+      lamp.position.set(2.12, 1.06, side);
+      bodyGroup.add(lamp);
+      const pupil = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.14, 10), sepiaMat);
+      pupil.rotation.z = Math.PI / 2;
+      pupil.position.set(2.13, 1.06, side);
+      bodyGroup.add(pupil);
+    }
+
+    const grille = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.28, 0.54), brassMat);
+    grille.position.set(2.13, 0.94, 0);
+    bodyGroup.add(grille);
+
+    // Side mirrors
+    for (const sz of [-0.9, 0.9]) {
+      const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.26, 0.14), creamMetalMat);
+      mirror.position.set(1.5, 1.56, sz);
+      bodyGroup.add(mirror);
+    }
+
+    // Hinged Red Octagon STOP Paddle on +Z side (folds flush when rotation.y = 0, swings out at PI/2)
+    const stopSignGroup = new THREE.Group();
+    stopSignGroup.position.set(1.06, 1.38, 0.83);
+    bodyGroup.add(stopSignGroup);
+
+    const stopArm = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.07, 0.05), creamMetalMat);
+    stopArm.position.set(-0.12, 0, 0);
+    stopSignGroup.add(stopArm);
+
+    const stopOctagon = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.26, 0.26, 0.06, 8),
+      makeGouacheMat('#D6342A', maxAnisotropy, { roughness: 0.45 }),
+    );
+    stopOctagon.rotation.x = Math.PI / 2;
+    stopOctagon.rotation.z = Math.PI / 8;
+    stopOctagon.position.set(-0.34, 0, 0);
+    stopSignGroup.add(stopOctagon);
+
+    const stopRim = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.2, 0.2, 0.07, 8),
+      creamRoofMat,
+    );
+    stopRim.rotation.x = Math.PI / 2;
+    stopRim.rotation.z = Math.PI / 8;
+    stopRim.position.set(-0.34, 0, 0);
+    stopSignGroup.add(stopRim);
+
+    const stopCore = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.16, 0.08, 8),
+      makeGouacheMat('#D6342A', maxAnisotropy, { roughness: 0.45 }),
+    );
+    stopCore.rotation.x = Math.PI / 2;
+    stopCore.rotation.z = Math.PI / 8;
+    stopCore.position.set(-0.34, 0, 0);
+    stopSignGroup.add(stopCore);
+
+    // 4 School Bus wheels resting flush at y = 0.44
+    for (const wx of [1.26, -1.16]) {
+      for (const wz of [-0.82, 0.82]) {
+        const w = createWheel(maxAnisotropy, 0.44, 0.28);
+        w.position.set(wx, 0.44, wz);
+        root.add(w);
+        wheels.push(w);
+      }
+    }
+
+    rig.stopSignGroup = stopSignGroup;
+    rig.busBeaconMat = busBeaconMat;
   }
 
   // Tag all child meshes with vehicleId so Raycaster clicks on any sub-part resolve cleanly
@@ -995,6 +1419,72 @@ export function buildWasteProp(kind: WasteKind): THREE.Group {
     box.position.y = 0.18;
     box.castShadow = true;
     g.add(box);
+  }
+  return g;
+}
+
+export function buildShapeStone(shapeId: ShapeId, maxAnisotropy: number): THREE.Group {
+  const g = new THREE.Group();
+  const opt = SHAPE_MAP[shapeId];
+  const mat = makeGouacheMat(opt.hex, maxAnisotropy, { roughness: 0.48, metalness: 0.08 });
+  const rimMat = new THREE.MeshStandardMaterial({
+    color: '#FBF1DA',
+    roughness: 0.65,
+    metalness: 0.04,
+  });
+
+  if (shapeId === 'circle') {
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.46, 0.48, 0.24, 24), mat);
+    disc.position.y = 0.14;
+    disc.castShadow = true;
+    disc.receiveShadow = true;
+    const inner = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.035, 8, 22), rimMat);
+    inner.rotation.x = Math.PI / 2;
+    inner.position.y = 0.27;
+    g.add(disc, inner);
+  } else if (shapeId === 'square') {
+    const block = new THREE.Mesh(makeRoundedBox(0.84, 0.24, 0.84, 0.1), mat);
+    block.position.y = 0.14;
+    block.castShadow = true;
+    block.receiveShadow = true;
+    const inlay = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.04, 0.52), rimMat);
+    inlay.position.y = 0.27;
+    g.add(block, inlay);
+  } else if (shapeId === 'triangle') {
+    const prism = new THREE.Mesh(new THREE.CylinderGeometry(0.54, 0.56, 0.24, 3), mat);
+    prism.position.y = 0.14;
+    prism.castShadow = true;
+    prism.receiveShadow = true;
+    const inlay = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.04, 3), rimMat);
+    inlay.position.y = 0.27;
+    g.add(prism, inlay);
+  } else {
+    const starShape = new THREE.Shape();
+    const spikes = 5;
+    const outerR = 0.52;
+    const innerR = 0.24;
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      if (i === 0) starShape.moveTo(x, y);
+      else starShape.lineTo(x, y);
+    }
+    starShape.closePath();
+    const geo = new THREE.ExtrudeGeometry(starShape, {
+      depth: 0.22,
+      bevelEnabled: true,
+      bevelThickness: 0.03,
+      bevelSize: 0.03,
+      bevelSegments: 2,
+    });
+    geo.rotateX(-Math.PI / 2);
+    const starMesh = new THREE.Mesh(geo, mat);
+    starMesh.position.y = 0.04;
+    starMesh.castShadow = true;
+    starMesh.receiveShadow = true;
+    g.add(starMesh);
   }
   return g;
 }

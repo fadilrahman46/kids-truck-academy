@@ -6,7 +6,7 @@ interface OfflineIndicatorProps {
   languageMode?: LanguageMode;
 }
 
-export function OfflineIndicator({ languageMode = 'bilingual' }: OfflineIndicatorProps) {
+export function OfflineIndicator({ languageMode = 'id' }: OfflineIndicatorProps) {
   const isOnline = useOnlineStatus();
 
   if (isOnline) return null;

@@ -9,18 +9,18 @@ interface LandscapeGuardProps {
 
 export function LandscapeGuard({
   visible,
-  languageMode = 'bilingual',
+  languageMode = 'id',
   onLockLandscape,
 }: LandscapeGuardProps) {
   if (!visible) return null;
 
   return (
     <div
-      className="pointer-events-auto fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#F3E7D1] p-6 text-center"
+      className="pointer-events-auto fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#F3E7D1] p-4 sm:p-6 text-center"
       role="alert"
       aria-live="polite"
     >
-      <div className="storybook-paper w-full max-w-sm rounded-3xl p-7">
+      <div className="storybook-paper max-h-[92dvh] w-full max-w-sm overflow-y-auto rounded-3xl p-6 sm:p-7">
         {/* Friendly Rotate Phone Graphic */}
         <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-2xl border-2 border-[#DEC195] bg-[#FAF0DC]">
           <div className="relative flex items-center justify-center">

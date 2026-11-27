@@ -5,6 +5,7 @@ import {
   type AgeMode,
   type LanguageMode,
   type MissionSnapshot,
+  type MissionVariant,
   type VehicleId,
   type ViewMode,
 } from './types/game';
@@ -27,13 +28,14 @@ const DEFAULT_STARS: Record<VehicleId, number> = {
   angkut: 0,
   tangki: 0,
   crane: 0,
+  ekskavator: 0,
   pemadam: 0,
   sampah: 0,
+  bus: 0,
 };
 
 function parseLanguageMode(val: unknown): LanguageMode {
-  if (val === 'id' || val === 'en' || val === 'bilingual') return val;
-  return 'bilingual';
+  return val === 'en' ? 'en' : 'id';
 }
 
 function loadSavedState(): {
@@ -50,7 +52,7 @@ function loadSavedState(): {
         ageMode: 'toddler',
         sfxEnabled: true,
         musicEnabled: true,
-        languageMode: 'bilingual',
+        languageMode: 'id',
         starsByTruck: { ...DEFAULT_STARS },
       };
     }
@@ -73,7 +75,7 @@ function loadSavedState(): {
       ageMode: 'toddler',
       sfxEnabled: true,
       musicEnabled: true,
-      languageMode: 'bilingual',
+      languageMode: 'id',
       starsByTruck: { ...DEFAULT_STARS },
     };
   }
@@ -89,6 +91,8 @@ export default function App() {
   const [languageMode, setLanguageMode] = useState<LanguageMode>(initial.languageMode);
   const [starsByTruck, setStarsByTruck] = useState<Record<VehicleId, number>>(initial.starsByTruck);
   const [mission, setMission] = useState<MissionSnapshot | null>(null);
+  const [missionVariant, setMissionVariant] = useState<MissionVariant>('classic');
+  const [launchingTruck, setLaunchingTruck] = useState<VehicleId | null>(null);
   const [celebratingTruck, setCelebratingTruck] = useState<VehicleId | null>(null);
   const [stickerBookOpen, setStickerBookOpen] = useState<boolean>(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
@@ -104,6 +108,10 @@ export default function App() {
   const engineRef = useRef<GameEngine | null>(null);
   const ageModeRef = useRef<AgeMode>(ageMode);
   ageModeRef.current = ageMode;
+  const missionVariantRef = useRef<MissionVariant>(missionVariant);
+  missionVariantRef.current = missionVariant;
+  const launchingTruckRef = useRef<VehicleId | null>(launchingTruck);
+  launchingTruckRef.current = launchingTruck;
 
   // Smooth staged progress animation up to 100% once Three.js engine signals ready
   useEffect(() => {
@@ -148,29 +156,51 @@ export default function App() {
     };
   }, [gameStarted, musicEnabled]);
 
-  const startVehicleMission = useCallback((vehicleId: VehicleId, modeOverride?: AgeMode) => {
-    soundEngine.unlock();
-    const activeAge = modeOverride ?? ageModeRef.current;
-    setSelectedTruck(vehicleId);
-    setViewMode('MISSION');
-    setCelebratingTruck(null);
-    setStickerBookOpen(false);
-    setSettingsOpen(false);
-    setDockCollapsed(false);
-    engineRef.current?.startMission(vehicleId, activeAge);
-  }, []);
+  const startVehicleMission = useCallback(
+    (vehicleId: VehicleId, modeOverride?: AgeMode, variantOverride?: MissionVariant) => {
+      soundEngine.unlock();
+      const activeAge = modeOverride ?? ageModeRef.current;
+      const activeVariant = variantOverride ?? 'classic';
+      setLaunchingTruck(null);
+      setSelectedTruck(vehicleId);
+      setMissionVariant(activeVariant);
+      setViewMode('MISSION');
+      setCelebratingTruck(null);
+      setStickerBookOpen(false);
+      setSettingsOpen(false);
+      setDockCollapsed(false);
+      engineRef.current?.startMission(vehicleId, activeAge, activeVariant);
+    },
+    [],
+  );
+
+  /** Drive the selected truck smoothly out of its storybook garage cottage, then open its mission */
+  const launchVehicleFromGarage = useCallback(
+    (vehicleId: VehicleId) => {
+      if (launchingTruckRef.current) return;
+      soundEngine.unlock();
+      setLaunchingTruck(vehicleId);
+      setCelebratingTruck(null);
+      setStickerBookOpen(false);
+      setSettingsOpen(false);
+      engineRef.current?.launchMissionFromGarage(vehicleId, ageModeRef.current, 'classic');
+    },
+    [],
+  );
 
   const handleBackToGarage = useCallback(() => {
     soundEngine.unlock();
     soundEngine.playPop();
+    setLaunchingTruck(null);
     setViewMode('GARAGE');
     setSelectedTruck(null);
     setMission(null);
+    setMissionVariant('classic');
     setCelebratingTruck(null);
     engineRef.current?.enterGarage();
     soundEngine.speakBilingual(
-      'Selamat datang di Kota Kendaraan! Pilih truk kesukaanmu!',
-      'Welcome to Vehicle Town! Pick your favorite truck!',
+      'Selamat datang di Kota Kendaraan! Pilih rumah truk kesukaanmu!',
+      'Welcome to Vehicle Town! Pick your favorite truck house!',
     );
   }, []);
 
@@ -182,8 +212,8 @@ export default function App() {
     void lockLandscape(isTouchDevice);
     setGameStarted(true);
     soundEngine.speakBilingual(
-      'Selamat datang di Kota Kendaraan Ceria! Pilih truk kesukaanmu!',
-      'Welcome to Vehicle Town! Pick your favorite truck!',
+      'Selamat datang di Kota Kendaraan Ceria! Ketuk tombol Main agar truk keluar dari rumahnya!',
+      'Welcome to Vehicle Town! Tap Play to call a truck out of its house!',
     );
   }, [lockLandscape]);
 
@@ -194,7 +224,14 @@ export default function App() {
 
     const engine = new GameEngine(mount, {
       onSelectTruckFrom3D: (vid) => {
-        startVehicleMission(vid);
+        launchVehicleFromGarage(vid);
+      },
+      onMissionStarted: (vid, variant) => {
+        setLaunchingTruck(null);
+        setSelectedTruck(vid);
+        setMissionVariant(variant);
+        setViewMode('MISSION');
+        setDockCollapsed(false);
       },
       onMissionSnapshot: (snap) => {
         setMission(snap);
@@ -223,7 +260,7 @@ export default function App() {
       engine.dispose();
       engineRef.current = null;
     };
-  }, [startVehicleMission]);
+  }, [launchVehicleFromGarage]);
 
   // Global keyboard shortcuts (Escape to close modals, H to collapse HUD)
   useEffect(() => {
@@ -256,8 +293,15 @@ export default function App() {
       nextMode === 'toddler' ? 'Toddler mode!' : 'Preschool mode!',
     );
     if (viewMode === 'MISSION' && selectedTruck) {
-      startVehicleMission(selectedTruck, nextMode);
+      startVehicleMission(selectedTruck, nextMode, missionVariantRef.current);
     }
+  };
+
+  const handleChangeMissionVariant = (nextVariant: MissionVariant) => {
+    if (!selectedTruck || nextVariant === missionVariant) return;
+    soundEngine.unlock();
+    soundEngine.playPop();
+    startVehicleMission(selectedTruck, ageModeRef.current, nextVariant);
   };
 
   const handleToggleSfx = () => {
@@ -281,16 +325,15 @@ export default function App() {
   };
 
   const handleChangeLanguage = (nextLang: LanguageMode) => {
+    const normalized: LanguageMode = nextLang === 'en' ? 'en' : 'id';
     soundEngine.unlock();
-    setLanguageMode(nextLang);
-    soundEngine.setLanguageMode(nextLang);
+    setLanguageMode(normalized);
+    soundEngine.setLanguageMode(normalized);
     soundEngine.playPop();
-    if (nextLang === 'id') {
-      soundEngine.speakBilingual('Bahasa Indonesia aktif!');
-    } else if (nextLang === 'en') {
+    if (normalized === 'en') {
       soundEngine.speakBilingual('English language active!', 'English language active!');
     } else {
-      soundEngine.speakBilingual('Bahasa Indonesia dan Inggris aktif!', 'Bilingual mode active!');
+      soundEngine.speakBilingual('Bahasa Indonesia aktif!', 'Indonesian language active!');
     }
   };
 
@@ -319,15 +362,20 @@ export default function App() {
 
   const totalStars = Object.values(starsByTruck).reduce((sum, n) => sum + n, 0);
   const currentVehicle = selectedTruck ? VEHICLE_MAP[selectedTruck] : null;
+  const launchingVehicle = launchingTruck ? VEHICLE_MAP[launchingTruck] : null;
 
-  const garagePromptId = 'Pilih truk 3D kesukaanmu untuk mulai belajar dan bermain!';
-  const garagePromptEn = 'Tap any 3D truck or pick from the dock below to play!';
+  const garagePromptId = launchingVehicle
+    ? `${launchingVehicle.nameId} sedang keluar dari rumahnya menuju misi!`
+    : 'Ketuk rumah truk atau tombol Main di bawah agar truk keluar dari rumahnya!';
+  const garagePromptEn = launchingVehicle
+    ? `${launchingVehicle.nameEn} is driving out of its house for the mission!`
+    : 'Tap any truck house or click Play below to send a truck outside!';
   const activePromptId = viewMode === 'GARAGE' ? garagePromptId : mission?.promptId || '';
   const activePromptEn = viewMode === 'GARAGE' ? garagePromptEn : mission?.promptEn || '';
   const primaryPromptText = languageMode === 'en' ? activePromptEn : activePromptId;
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#D9F0FF]">
+    <div className="relative h-[100dvh] w-screen overflow-hidden bg-[#D9F0FF]">
       {/* Dedicated Isolated WebGL Canvas Container */}
       <div
         ref={canvasMountRef}
@@ -371,34 +419,29 @@ export default function App() {
             />
 
             {/* Compact Storybook Prompt Banner (Sits neatly in sky above 3D trucks) */}
-            <div className="compact-prompt-wrap mt-3 flex justify-center px-3">
-              <div className="compact-prompt-card storybook-paper pointer-events-auto flex max-w-[820px] items-center gap-3 rounded-2xl px-4 py-2.5">
+            <div className="compact-prompt-wrap mt-2.5 flex justify-center px-2.5 sm:mt-3 sm:px-3">
+              <div className="compact-prompt-card storybook-paper pointer-events-auto flex w-full max-w-[820px] items-center gap-2.5 rounded-2xl px-3 py-2 sm:w-auto sm:gap-3 sm:px-4 sm:py-2.5">
                 <button
                   type="button"
                   onClick={handleRepeatVoice}
-                  className="btn-tactile flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-[#0284C7] text-white cursor-pointer"
+                  className="btn-tactile flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-[#0284C7] text-white cursor-pointer"
                   title={languageMode === 'en' ? 'Hear voice again' : 'Dengar suara lagi'}
                   aria-label={languageMode === 'en' ? 'Repeat voice instruction' : 'Dengar suara instruksi lagi'}
                 >
-                  <Volume2 className="h-5 w-5" />
+                  <Volume2 className="h-4 w-4 sm:h-5 sm:w-5" />
                 </button>
 
                 <div className="min-w-0 flex-1">
-                  <p className="font-display text-sm font-extrabold text-[#2D1F14] sm:text-base leading-snug truncate sm:whitespace-normal">
+                  <p className="font-display text-xs font-extrabold text-[#2D1F14] sm:text-base leading-snug line-clamp-2 sm:line-clamp-none">
                     {primaryPromptText}
                   </p>
-                  {languageMode === 'bilingual' && (
-                    <p className="compact-prompt-sub text-xs font-semibold text-[#68503B] leading-snug">
-                      {activePromptEn}
-                    </p>
-                  )}
                 </div>
 
                 {viewMode === 'MISSION' && currentVehicle && (
                   <button
                     type="button"
                     onClick={() => handleHonkTruck(currentVehicle.id)}
-                    className="btn-tactile flex h-11 shrink-0 items-center gap-1.5 rounded-xl px-3.5 text-xs font-extrabold text-white whitespace-nowrap cursor-pointer"
+                    className="btn-tactile flex h-9 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl px-2.5 sm:px-3.5 text-xs font-extrabold text-white whitespace-nowrap cursor-pointer"
                     style={{ backgroundColor: currentVehicle.accentHex }}
                     aria-label={
                       languageMode === 'en'
@@ -421,12 +464,15 @@ export default function App() {
             viewMode={viewMode}
             ageMode={ageMode}
             languageMode={languageMode}
+            missionVariant={missionVariant}
+            launchingTruck={launchingTruck}
             collapsed={dockCollapsed}
             modalOpen={Boolean(celebratingTruck) || stickerBookOpen || settingsOpen}
             starsByTruck={starsByTruck}
             mission={mission}
             onToggleCollapse={() => setDockCollapsed((c) => !c)}
-            onSelectTruck={(id) => startVehicleMission(id)}
+            onSelectTruck={(id) => launchVehicleFromGarage(id)}
+            onChangeMissionVariant={handleChangeMissionVariant}
             onHonkTruck={handleHonkTruck}
             onDispatchAction={(action, payload) => {
               soundEngine.unlock();
@@ -434,12 +480,14 @@ export default function App() {
             }}
           />
 
-          {/* Star Celebration Modal (with Next Truck shortcut) */}
+          {/* Star Celebration Modal (with Next Truck & Bonus Mission shortcuts) */}
           {celebratingTruck && (
             <CelebrationModal
               vehicleId={celebratingTruck}
+              missionVariant={missionVariant}
               languageMode={languageMode}
-              onPlayAgain={() => startVehicleMission(celebratingTruck)}
+              onPlayAgain={() => startVehicleMission(celebratingTruck, undefined, missionVariant)}
+              onTryBonusMission={() => startVehicleMission(celebratingTruck, undefined, 'bonus')}
               onNextTruck={(nextId) => startVehicleMission(nextId)}
               onBackToGarage={handleBackToGarage}
             />
@@ -454,7 +502,9 @@ export default function App() {
                 soundEngine.playPop();
                 setStickerBookOpen(false);
               }}
-              onPlayTruck={(id) => startVehicleMission(id)}
+              onPlayTruck={(id) =>
+                viewMode === 'GARAGE' ? launchVehicleFromGarage(id) : startVehicleMission(id)
+              }
               onHonkTruck={handleHonkTruck}
             />
           )}

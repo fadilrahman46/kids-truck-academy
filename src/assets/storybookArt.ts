@@ -14,4 +14,6 @@ export const VEHICLE_ILLUSTRATIONS: Record<VehicleId, string> = {
   crane: '/src/assets/images/truck_crane_book_1795673965188.jpg',
   pemadam: '/src/assets/images/truck_pemadam_book_1795673967649.jpg',
   sampah: '/src/assets/images/truck_sampah_book_1795673967207.jpg',
+  ekskavator: '/src/assets/images/truck_ekskavator_book_1795691529772.jpg',
+  bus: '/src/assets/images/truck_bus_book_1795691531302.jpg',
 };

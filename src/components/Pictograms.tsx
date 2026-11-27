@@ -1,5 +1,12 @@
 import { useId } from 'react';
-import type { CargoTypeId, MolenBlueprintId, VehicleId, WasteKind } from '../types/game';
+import type {
+  CargoTypeId,
+  MolenBlueprintId,
+  ShapeId,
+  TrafficLightState,
+  VehicleId,
+  WasteKind,
+} from '../types/game';
 
 interface IconProps {
   className?: string;
@@ -91,6 +98,17 @@ export function BlueprintPictogram({
           <path d="M7.5 16.5C11 9.5 25 9.5 28.5 16.5" stroke="#DC2626" strokeWidth="2.8" fill="none" strokeLinecap="round" />
           <path d="M12.5 12.2v4.5M18 11v5.5M23.5 12.2v4.5" stroke="#7A4B21" strokeWidth="1.1" />
           <rect x="3.5" y="16" width="29" height="4.2" rx="1.4" fill={`url(#${uid}-deck)`} stroke={INK} strokeWidth="1.1" />
+        </svg>
+      );
+    case 'windmill':
+      return (
+        <svg viewBox="0 0 36 36" className={className} aria-hidden="true">
+          <ellipse cx="18" cy="31.5" rx="11" ry="2.1" fill="#7A4B21" opacity="0.22" />
+          <path d="M12.5 30L14.5 14h7l2 16h-11z" fill="#FDE68A" stroke={INK} strokeWidth="1.2" strokeLinejoin="round" />
+          <path d="M13.5 14.5L18 8.5l4.5 6h-9z" fill="#DC2626" stroke={INK} strokeWidth="1.1" strokeLinejoin="round" />
+          <path d="M18 13.5L8 7M18 13.5L28 7M18 13.5L8 20M18 13.5L28 20" stroke="#92400E" strokeWidth="2.4" strokeLinecap="round" />
+          <circle cx="18" cy="13.5" r="2.2" fill="#F59E0B" stroke={INK} strokeWidth="1" />
+          <path d="M16 30v-5a2 2 0 0 1 4 0v5z" fill="#78350F" stroke={INK} strokeWidth="0.9" />
         </svg>
       );
   }
@@ -627,5 +645,146 @@ export function VehicleStickerPictogram({
           <circle cx="35" cy="36" r="2" fill="#CBD5E1" />
         </svg>
       );
+    case 'ekskavator':
+      return (
+        <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+          <ellipse cx="24" cy="40.5" rx="18" ry="2.6" fill="#7A4B21" opacity="0.2" />
+          <path d="M22 21l-9-8-6 12" stroke="#EA580C" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          <path d="M5 25h6l-1.5 6.5c-2.5.4-4.8-1-4.5-6.5z" fill="#64748B" stroke={INK} strokeWidth="1.2" strokeLinejoin="round" />
+          <rect x="19" y="15" width="18" height="14" rx="3" fill="#EA580C" stroke={INK} strokeWidth="1.2" />
+          <rect x="22" y="17.5" width="8.5" height="6.5" rx="1.4" fill="#BAE6FD" stroke={INK} strokeWidth="0.9" />
+          <rect x="15" y="30" width="25" height="7.5" rx="3.75" fill="#334155" stroke={INK} strokeWidth="1.2" />
+          <circle cx="20" cy="33.8" r="2.1" fill="#CBD5E1" />
+          <circle cx="27.5" cy="33.8" r="2.1" fill="#CBD5E1" />
+          <circle cx="35" cy="33.8" r="2.1" fill="#CBD5E1" />
+        </svg>
+      );
+    case 'bus':
+      return (
+        <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+          <ellipse cx="24" cy="40.5" rx="19" ry="2.6" fill="#7A4B21" opacity="0.2" />
+          <rect x="6" y="15" width="35" height="17" rx="4" fill="#FACC15" stroke={INK} strokeWidth="1.3" />
+          <rect x="6.5" y="25.5" width="34" height="2.6" fill="#4A321F" />
+          <rect x="9" y="18" width="6" height="5.5" rx="1" fill="#BAE6FD" stroke={INK} strokeWidth="0.9" />
+          <rect x="17" y="18" width="6" height="5.5" rx="1" fill="#BAE6FD" stroke={INK} strokeWidth="0.9" />
+          <rect x="25" y="18" width="6" height="5.5" rx="1" fill="#BAE6FD" stroke={INK} strokeWidth="0.9" />
+          <rect x="33" y="18" width="5.5" height="5.5" rx="1" fill="#E0F2FE" stroke={INK} strokeWidth="0.9" />
+          <circle cx="14.5" cy="34.5" r="4.3" fill="#1E293B" />
+          <circle cx="14.5" cy="34.5" r="1.8" fill="#FDE68A" />
+          <circle cx="33.5" cy="34.5" r="4.3" fill="#1E293B" />
+          <circle cx="33.5" cy="34.5" r="1.8" fill="#FDE68A" />
+        </svg>
+      );
   }
+}
+
+export function ShapePictogram({
+  shape,
+  className = 'h-8 w-8',
+}: {
+  shape: ShapeId;
+  className?: string;
+}) {
+  const uid = useId().replace(/:/g, '');
+  switch (shape) {
+    case 'circle':
+      return (
+        <svg viewBox="0 0 36 36" className={className} aria-hidden="true">
+          <defs>
+            <radialGradient id={`${uid}-ci`} cx="35%" cy="30%" r="70%">
+              <stop offset="0%" stopColor="#FFA28B" />
+              <stop offset="55%" stopColor="#E15A3E" />
+              <stop offset="100%" stopColor="#A6321B" />
+            </radialGradient>
+          </defs>
+          <circle cx="18" cy="18" r="12.5" fill={`url(#${uid}-ci)`} stroke={INK} strokeWidth="1.5" />
+          <ellipse cx="13.5" cy="13" rx="3" ry="1.8" transform="rotate(-25 13.5 13)" fill="#FFF5F0" opacity="0.55" />
+        </svg>
+      );
+    case 'square':
+      return (
+        <svg viewBox="0 0 36 36" className={className} aria-hidden="true">
+          <defs>
+            <linearGradient id={`${uid}-sq`} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#7DC0F5" />
+              <stop offset="55%" stopColor="#2E7CC2" />
+              <stop offset="100%" stopColor="#1B5085" />
+            </linearGradient>
+          </defs>
+          <rect x="6.5" y="6.5" width="23" height="23" rx="3.2" fill={`url(#${uid}-sq)`} stroke={INK} strokeWidth="1.5" />
+          <path d="M10 10.5h12" stroke="#E0F2FE" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
+        </svg>
+      );
+    case 'triangle':
+      return (
+        <svg viewBox="0 0 36 36" className={className} aria-hidden="true">
+          <defs>
+            <linearGradient id={`${uid}-tr`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#72D993" />
+              <stop offset="60%" stopColor="#2F9A58" />
+              <stop offset="100%" stopColor="#1B6638" />
+            </linearGradient>
+          </defs>
+          <path d="M18 5.2L31 29.5H5L18 5.2z" fill={`url(#${uid}-tr)`} stroke={INK} strokeWidth="1.5" strokeLinejoin="round" />
+          <path d="M16 12.5L11.5 22" stroke="#DCFCE7" strokeWidth="1.8" strokeLinecap="round" opacity="0.5" />
+        </svg>
+      );
+    case 'star':
+      return (
+        <svg viewBox="0 0 36 36" className={className} aria-hidden="true">
+          <defs>
+            <linearGradient id={`${uid}-st`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#FEF08A" />
+              <stop offset="55%" stopColor="#F0B928" />
+              <stop offset="100%" stopColor="#B8740B" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M18 4.2l4.1 8.4 9.3 1.3-6.7 6.5 1.6 9.2L18 25.2l-8.3 4.4 1.6-9.2-6.7-6.5 9.3-1.3L18 4.2z"
+            fill={`url(#${uid}-st)`}
+            stroke={INK}
+            strokeWidth="1.4"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+  }
+}
+
+export function TrafficLightPictogram({
+  state,
+  className = 'h-12 w-7',
+}: {
+  state: TrafficLightState;
+  className?: string;
+}) {
+  return (
+    <svg viewBox="0 0 28 48" className={className} aria-hidden="true">
+      <rect x="3" y="2" width="22" height="44" rx="6" fill="#3F342B" stroke={INK} strokeWidth="1.8" />
+      <circle
+        cx="14"
+        cy="11"
+        r="5.2"
+        fill={state === 'red' ? '#EF4444' : '#5E3A36'}
+        stroke={state === 'red' ? '#FECACA' : '#2C221B'}
+        strokeWidth="1.4"
+      />
+      <circle
+        cx="14"
+        cy="24"
+        r="5.2"
+        fill={state === 'yellow' ? '#FACC15' : '#5E522E'}
+        stroke={state === 'yellow' ? '#FEF08A' : '#2C221B'}
+        strokeWidth="1.4"
+      />
+      <circle
+        cx="14"
+        cy="37"
+        r="5.2"
+        fill={state === 'green' ? '#22C55E' : '#2E4E39'}
+        stroke={state === 'green' ? '#BBF7D0' : '#2C221B'}
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
 }

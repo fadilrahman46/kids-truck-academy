@@ -18,22 +18,16 @@ const LANGUAGE_OPTIONS: {
   descEn: string;
 }[] = [
   {
-    id: 'bilingual',
-    label: 'ID + EN',
-    descId: 'Dwibahasa (Indonesia & Inggris)',
-    descEn: 'Bilingual (Indonesian & English)',
-  },
-  {
     id: 'id',
-    label: 'Indonesia',
-    descId: 'Hanya Bahasa Indonesia',
-    descEn: 'Indonesian only',
+    label: 'Bahasa Indonesia',
+    descId: 'Suara & teks Bahasa Indonesia',
+    descEn: 'Indonesian voice & text',
   },
   {
     id: 'en',
     label: 'English',
-    descId: 'Hanya Bahasa Inggris',
-    descEn: 'English only',
+    descId: 'Suara & teks Bahasa Inggris',
+    descEn: 'English voice & text',
   },
 ];
 
@@ -61,7 +55,7 @@ export function SettingsModal({
         }
       }}
     >
-      <div className="animate-pop-in storybook-paper flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl">
+      <div className="animate-pop-in storybook-paper flex max-h-[92dvh] w-full max-w-md flex-col overflow-hidden rounded-3xl">
         {/* Carved Honey-Oak Header */}
         <div className="flex items-center justify-between gap-3 border-b-2 border-[#CFA772] bg-gradient-to-b from-[#FFF9EC] to-[#F3E3C4] px-5 py-3.5">
           <div className="flex items-center gap-3 min-w-0">
@@ -176,7 +170,7 @@ export function SettingsModal({
             </div>
 
             <div
-              className="storybook-wood-tray mt-3 grid grid-cols-3 gap-1.5 rounded-xl p-1"
+              className="storybook-wood-tray mt-3 grid grid-cols-2 gap-1.5 rounded-xl p-1"
               role="radiogroup"
               aria-label={pickLang(languageMode, 'Pilih bahasa', 'Select language')}
             >

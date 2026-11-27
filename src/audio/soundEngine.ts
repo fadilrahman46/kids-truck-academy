@@ -80,7 +80,7 @@ class SoundEngine {
   private ctx: AudioContext | null = null;
   private sfxEnabled = true;
   private musicEnabled = true;
-  private languageMode: LanguageMode = 'bilingual';
+  private languageMode: LanguageMode = 'id';
   private userUnlocked = false;
   private speechTimer: number | null = null;
   private duckReleaseTimer: number | null = null;
@@ -488,8 +488,6 @@ class SoundEngine {
       return;
     }
 
-    const shouldSpeakEnAfter = this.languageMode === 'bilingual' && Boolean(enText);
-
     try {
       const uId = new SpeechSynthesisUtterance(idText);
       uId.lang = 'id-ID';
@@ -497,20 +495,8 @@ class SoundEngine {
       uId.rate = 0.94;
       uId.pitch = 1.12;
       uId.volume = 1.0;
-      uId.onend = () => {
-        if (shouldSpeakEnAfter && enText) {
-          this.speechTimer = window.setTimeout(() => speakEn(enText), 180);
-        } else {
-          finishSpeech();
-        }
-      };
-      uId.onerror = () => {
-        if (shouldSpeakEnAfter && enText) {
-          this.speechTimer = window.setTimeout(() => speakEn(enText), 150);
-        } else {
-          finishSpeech();
-        }
-      };
+      uId.onend = finishSpeech;
+      uId.onerror = finishSpeech;
       window.speechSynthesis.speak(uId);
     } catch {
       finishSpeech();
@@ -609,6 +595,20 @@ class SoundEngine {
         this.playTone(260, 0.15, 'triangle', 0.14, 0, 310);
         this.playTone(340, 0.22, 'triangle', 0.14, 0.18, 390);
         break;
+      case 'ekskavator':
+        // Sturdy cheerful construction double-toot
+        this.playTone(185, 0.16, 'sawtooth', 0.08, 0, 210);
+        this.playTone(246.94, 0.16, 'triangle', 0.11, 0);
+        this.playTone(185, 0.22, 'sawtooth', 0.08, 0.2, 220);
+        this.playTone(246.94, 0.22, 'triangle', 0.11, 0.2);
+        break;
+      case 'bus':
+        // Classic friendly two-tone school bus horn
+        this.playTone(440, 0.15, 'triangle', 0.14, 0);
+        this.playTone(554.37, 0.15, 'triangle', 0.11, 0);
+        this.playTone(349.23, 0.24, 'triangle', 0.14, 0.18);
+        this.playTone(440, 0.24, 'triangle', 0.11, 0.18);
+        break;
     }
   }
 
@@ -653,6 +653,37 @@ class SoundEngine {
     filter.connect(gain);
     gain.connect(ctx.destination);
     noise.start();
+  }
+
+  public playDigScoop(): void {
+    if (!this.sfxEnabled) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    // Hydraulic dip + earthy scoop crunch
+    this.playTone(170, 0.18, 'triangle', 0.12, 0, 260);
+    this.playTone(320, 0.14, 'sine', 0.11, 0.14, 520);
+    const bufferSize = Math.floor(ctx.sampleRate * 0.16);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 1.5);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 520;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.11;
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    noise.start();
+  }
+
+  public playTrafficDing(): void {
+    this.playTone(880, 0.12, 'sine', 0.12, 0);
+    this.playTone(1174.66, 0.18, 'sine', 0.1, 0.07);
   }
 
   public playPipeClick(): void {
