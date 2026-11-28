@@ -502,8 +502,9 @@ export class GameEngine {
     soundEngine.playHorn(vehicleId);
     soundEngine.playEngineRev();
     soundEngine.speakBilingual(
-      `${cfg.nameId} melaju keluar menuju lokasi misi!`,
-      `${cfg.nameEn} is driving out to the mission!`,
+      `Wah, asyik! ${cfg.nameId} melaju keluar menuju lokasi misi!`,
+      `Yay, here we go! ${cfg.nameEn} is driving out to the mission!`,
+      'action',
     );
 
     // Build collision-free Catmull-Rom spline:

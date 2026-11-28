@@ -101,6 +101,7 @@ export default function App() {
   const [engineReady, setEngineReady] = useState<boolean>(false);
   const [loadProgress, setLoadProgress] = useState<number>(18);
   const [gameStarted, setGameStarted] = useState<boolean>(false);
+  const [isNarrating, setIsNarrating] = useState<boolean>(false);
 
   const { isPortrait, lockLandscape } = useLandscapeLock();
 
@@ -140,6 +141,21 @@ export default function App() {
       // Ignore storage quota issues
     }
   }, [ageMode, sfxEnabled, musicEnabled, languageMode, starsByTruck]);
+
+  // Subscribe to narrator speaking state for gentle visual pulse on speaker button
+  useEffect(() => {
+    return soundEngine.subscribeSpeaking(setIsNarrating);
+  }, []);
+
+  // Pre-warm the cheerful welcome greeting in cache while player is on Start Screen
+  useEffect(() => {
+    if (gameStarted || !sfxEnabled) return;
+    soundEngine.prefetchSpeech(
+      'Halo teman cilik! Selamat datang di Kota Kendaraan Ceria! Yuk ketuk tombol Main agar truk keluar dari rumahnya!',
+      'Hello little friend! Welcome to Cheerful Vehicle Town! Tap Play to call a truck out of its house!',
+      'welcome',
+    );
+  }, [gameStarted, languageMode, sfxEnabled]);
 
   // Begin chill-happy theme song on the very first interaction on the start screen (autoplay-policy safe)
   useEffect(() => {
@@ -199,8 +215,9 @@ export default function App() {
     setCelebratingTruck(null);
     engineRef.current?.enterGarage();
     soundEngine.speakBilingual(
-      'Selamat datang di Kota Kendaraan! Pilih rumah truk kesukaanmu!',
-      'Welcome to Vehicle Town! Pick your favorite truck house!',
+      'Halo lagi! Yuk pilih rumah truk kesukaanmu di Kota Kendaraan!',
+      'Welcome back to Vehicle Town! Pick your favorite truck house!',
+      'welcome',
     );
   }, []);
 
@@ -212,8 +229,9 @@ export default function App() {
     void lockLandscape(isTouchDevice);
     setGameStarted(true);
     soundEngine.speakBilingual(
-      'Selamat datang di Kota Kendaraan Ceria! Ketuk tombol Main agar truk keluar dari rumahnya!',
-      'Welcome to Vehicle Town! Tap Play to call a truck out of its house!',
+      'Halo teman cilik! Selamat datang di Kota Kendaraan Ceria! Yuk ketuk tombol Main agar truk keluar dari rumahnya!',
+      'Hello little friend! Welcome to Cheerful Vehicle Town! Tap Play to call a truck out of its house!',
+      'welcome',
     );
   }, [lockLandscape]);
 
@@ -243,7 +261,11 @@ export default function App() {
           [vid]: (prev[vid] || 0) + 1,
         }));
         soundEngine.playCelebrateFanfare();
-        soundEngine.speakBilingual('Hebat sekali! Kamu dapat bintang!', 'Great job! You earned a star!');
+        soundEngine.speakBilingual(
+          'Hore! Hebat sekali, kamu dapat bintang baru!',
+          'Yay! Amazing job, you earned a brand new star!',
+          'celebrate',
+        );
       },
       onContextLost: (lost) => {
         setContextLost(lost);
@@ -331,9 +353,9 @@ export default function App() {
     soundEngine.setLanguageMode(normalized);
     soundEngine.playPop();
     if (normalized === 'en') {
-      soundEngine.speakBilingual('English language active!', 'English language active!');
+      soundEngine.speakBilingual('English voice is ready! Let us play!', 'English voice is ready! Let us play!', 'welcome');
     } else {
-      soundEngine.speakBilingual('Bahasa Indonesia aktif!', 'Indonesian language active!');
+      soundEngine.speakBilingual('Suara Bahasa Indonesia siap! Yuk bermain!', 'Indonesian voice is ready!', 'welcome');
     }
   };
 
@@ -424,7 +446,9 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleRepeatVoice}
-                  className="btn-tactile flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-[#0284C7] text-white cursor-pointer"
+                  className={`btn-tactile flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl bg-[#0284C7] text-white cursor-pointer ${
+                    isNarrating ? 'ring-2 ring-sky-300 ring-offset-1 ring-offset-[#FDF8EE] animate-pulse' : ''
+                  }`}
                   title={languageMode === 'en' ? 'Hear voice again' : 'Dengar suara lagi'}
                   aria-label={languageMode === 'en' ? 'Repeat voice instruction' : 'Dengar suara instruksi lagi'}
                 >

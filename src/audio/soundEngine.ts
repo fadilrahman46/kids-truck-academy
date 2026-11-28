@@ -76,6 +76,61 @@ const THEME_TOTAL_STEPS = 64;
 const MUSIC_BASE_GAIN = 0.2;
 const MUSIC_DUCK_GAIN = 0.06;
 
+export type NarrationMood = 'welcome' | 'explain' | 'action' | 'encourage' | 'celebrate';
+
+const TTS_FETCH_TIMEOUT_MS = 7500;
+const MAX_CLIENT_WAV_CACHE = 120;
+
+const CELEBRATE_REGEX =
+  /\b(hore|hebat|yeay|yay|bravo|bintang|berhasil|selesai|pintar|keren|mekar|amazing|great job|awesome|well done|earned a star|bloom|fantastic|wonderful)\b/i;
+const ENCOURAGE_REGEX =
+  /\b(coba lagi|hampir|belum|pelan|hati-hati|tunggu|almost|try again|careful|wait|ready|oops|ups)\b/i;
+const WELCOME_REGEX =
+  /\b(selamat datang|halo|pilih rumah|welcome|hello|pick your favorite)\b/i;
+const ACTION_REGEX =
+  /\b(wiu-wiu|wee-woo|melaju|berputar|memutar|menggali|menyemprot|mengantar|keluar|berhenti|jalan|driving|rolling|spinning|rushing|digging|spraying|zoom|go!)\b/i;
+const HAS_PLAYFUL_OPENER_REGEX =
+  /^(halo|wah|hore|yeay|ayo|yuk|wiu|hampir|ups|bagus|hebat|selamat|yay|ooh|woo|let'?s|hello|welcome|almost|great|wee|oops|nice|wow)\b/i;
+
+function inferNarrationMood(text: string): NarrationMood {
+  if (CELEBRATE_REGEX.test(text)) return 'celebrate';
+  if (ENCOURAGE_REGEX.test(text)) return 'encourage';
+  if (WELCOME_REGEX.test(text)) return 'welcome';
+  if (ACTION_REGEX.test(text)) return 'action';
+  return 'explain';
+}
+
+function enrichTextForChildren(text: string, lang: 'id' | 'en', mood: NarrationMood): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  const words = trimmed.split(/\s+/);
+
+  // Keep short labels (truck names, numbers, colors, letters) snappy & bouncy
+  if (words.length <= 3) {
+    return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}!`;
+  }
+
+  if (HAS_PLAYFUL_OPENER_REGEX.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Deterministic friendly opener based on text length so caching stays consistent
+  const variant = trimmed.length % 2;
+  if (lang === 'en') {
+    if (mood === 'celebrate') return `Yay! ${trimmed}`;
+    if (mood === 'encourage') return `Almost there! ${trimmed}`;
+    if (mood === 'action') return `Here we go! ${trimmed}`;
+    if (mood === 'welcome') return `Hello friend! ${trimmed}`;
+    return variant === 0 ? `Ooh, fun! ${trimmed}` : `Let's play! ${trimmed}`;
+  }
+
+  if (mood === 'celebrate') return `Hore! ${trimmed}`;
+  if (mood === 'encourage') return `Hampir benar! ${trimmed}`;
+  if (mood === 'action') return `Ayo melaju! ${trimmed}`;
+  if (mood === 'welcome') return `Halo teman cilik! ${trimmed}`;
+  return variant === 0 ? `Wah, seru! ${trimmed}` : `Yuk kita main! ${trimmed}`;
+}
+
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private sfxEnabled = true;
@@ -87,6 +142,16 @@ class SoundEngine {
   private voicesLoaded = false;
   private idVoice: SpeechSynthesisVoice | null = null;
   private enVoice: SpeechSynthesisVoice | null = null;
+
+  // Expressive Gemini TTS (Kore) playback & caching state
+  private speechSeq = 0;
+  private ttsAbort: AbortController | null = null;
+  private activeVoiceSource: AudioBufferSourceNode | null = null;
+  private activeVoiceHtmlAudio: HTMLAudioElement | null = null;
+  private activeVoiceBlobUrl: string | null = null;
+  private wavCache: Map<string, ArrayBuffer> = new Map();
+  private isSpeaking = false;
+  private speakingListeners: Set<(speaking: boolean) => void> = new Set();
 
   // Chill-happy background theme song state
   private musicBusGain: GainNode | null = null;
@@ -162,11 +227,28 @@ class SoundEngine {
   }
 
   public setLanguageMode(mode: LanguageMode): void {
+    if (this.languageMode !== mode) {
+      this.stopSpeech();
+    }
     this.languageMode = mode;
   }
 
   public getLanguageMode(): LanguageMode {
     return this.languageMode;
+  }
+
+  public subscribeSpeaking(listener: (speaking: boolean) => void): () => void {
+    this.speakingListeners.add(listener);
+    listener(this.isSpeaking);
+    return () => {
+      this.speakingListeners.delete(listener);
+    };
+  }
+
+  private setSpeakingState(next: boolean): void {
+    if (this.isSpeaking === next) return;
+    this.isSpeaking = next;
+    this.speakingListeners.forEach((fn) => fn(next));
   }
 
   public isThemePlaying(): boolean {
@@ -421,11 +503,65 @@ class SoundEngine {
     }
   }
 
+  private getCachedClientWav(key: string): ArrayBuffer | null {
+    const hit = this.wavCache.get(key);
+    if (!hit) return null;
+    this.wavCache.delete(key);
+    this.wavCache.set(key, hit);
+    return hit;
+  }
+
+  private setCachedClientWav(key: string, data: ArrayBuffer): void {
+    if (this.wavCache.has(key)) {
+      this.wavCache.delete(key);
+    }
+    this.wavCache.set(key, data);
+    while (this.wavCache.size > MAX_CLIENT_WAV_CACHE) {
+      const oldest = this.wavCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.wavCache.delete(oldest);
+    }
+  }
+
+  private cleanupActiveAudioNodes(): void {
+    if (this.activeVoiceSource) {
+      try {
+        this.activeVoiceSource.onended = null;
+        this.activeVoiceSource.stop();
+        this.activeVoiceSource.disconnect();
+      } catch {
+        // Ignore already stopped source
+      }
+      this.activeVoiceSource = null;
+    }
+    if (this.activeVoiceHtmlAudio) {
+      try {
+        this.activeVoiceHtmlAudio.onended = null;
+        this.activeVoiceHtmlAudio.onerror = null;
+        this.activeVoiceHtmlAudio.pause();
+        this.activeVoiceHtmlAudio.src = '';
+      } catch {
+        // Ignore media pause error
+      }
+      this.activeVoiceHtmlAudio = null;
+    }
+    if (this.activeVoiceBlobUrl) {
+      URL.revokeObjectURL(this.activeVoiceBlobUrl);
+      this.activeVoiceBlobUrl = null;
+    }
+  }
+
   public stopSpeech(): void {
+    this.speechSeq += 1;
+    if (this.ttsAbort) {
+      this.ttsAbort.abort();
+      this.ttsAbort = null;
+    }
     if (this.speechTimer !== null) {
       window.clearTimeout(this.speechTimer);
       this.speechTimer = null;
     }
+    this.cleanupActiveAudioNodes();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
@@ -434,13 +570,113 @@ class SoundEngine {
       }
     }
     this.setSpeechDucking(false);
+    this.setSpeakingState(false);
   }
 
-  public speakBilingual(idText: string, enText?: string): void {
-    if (!this.sfxEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+  /** Quietly pre-warm a frequent line in the WAV cache so playback is instant */
+  public prefetchSpeech(idText: string, enText?: string, explicitMood?: NarrationMood): void {
+    if (typeof window === 'undefined' || !this.sfxEnabled) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+    const lang: 'id' | 'en' = this.languageMode === 'en' ? 'en' : 'id';
+    const baseText = (lang === 'en' ? enText || idText : idText).trim();
+    if (!baseText) return;
+    const mood = explicitMood ?? inferNarrationMood(baseText);
+    const spokenText = enrichTextForChildren(baseText, lang, mood);
+    const cacheKey = `${lang}|${mood}|${spokenText}`;
+    if (this.wavCache.has(cacheKey)) return;
+
+    void fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: spokenText, language: lang, mood }),
+    })
+      .then((res) => (res.ok ? res.arrayBuffer() : null))
+      .then((buf) => {
+        if (buf && buf.byteLength > 44) {
+          this.setCachedClientWav(cacheKey, buf);
+        }
+      })
+      .catch(() => {
+        // Ignore background prefetch errors
+      });
+  }
+
+  private async playWavArrayBuffer(wavBytes: ArrayBuffer, seq: number): Promise<boolean> {
+    if (seq !== this.speechSeq || !this.sfxEnabled) return false;
+
+    const finish = () => {
+      if (seq !== this.speechSeq) return;
+      this.cleanupActiveAudioNodes();
+      this.setSpeechDucking(false);
+      this.setSpeakingState(false);
+    };
+
+    // Prefer unlocked Web AudioContext (immune to iOS Safari async-fetch autoplay blocks)
+    const ctx = this.ensureContext();
+    if (ctx) {
+      try {
+        const decoded = await ctx.decodeAudioData(wavBytes.slice(0));
+        if (seq !== this.speechSeq || !this.sfxEnabled) return false;
+        if (ctx.state === 'suspended') {
+          await ctx.resume().catch(() => {});
+        }
+        const source = ctx.createBufferSource();
+        const gain = ctx.createGain();
+        source.buffer = decoded;
+        // Subtle 12ms fade-in prevents click pops
+        const now = ctx.currentTime;
+        gain.gain.setValueAtTime(0.01, now);
+        gain.gain.linearRampToValueAtTime(1.0, now + 0.012);
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        source.onended = finish;
+        this.activeVoiceSource = source;
+        source.start(0);
+        return true;
+      } catch {
+        // Fall through to HTMLAudioElement if decodeAudioData fails
+      }
+    }
+
+    // Fallback to HTMLAudioElement for WAV playback
+    try {
+      const blob = new Blob([wavBytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.volume = 1.0;
+      this.activeVoiceBlobUrl = url;
+      this.activeVoiceHtmlAudio = audio;
+      audio.onended = finish;
+      audio.onerror = finish;
+      await audio.play();
+      return true;
+    } catch {
+      this.cleanupActiveAudioNodes();
+      return false;
+    }
+  }
+
+  /** Expressive multi-clause browser Web Speech fallback with dynamic mood & punctuation pitch contour */
+  private speakWithProsodicBrowserVoice(
+    text: string,
+    lang: 'id' | 'en',
+    mood: NarrationMood,
+    seq: number,
+  ): void {
+    if (
+      seq !== this.speechSeq ||
+      !this.sfxEnabled ||
+      typeof window === 'undefined' ||
+      !('speechSynthesis' in window)
+    ) {
+      if (seq === this.speechSeq) {
+        this.setSpeechDucking(false);
+        this.setSpeakingState(false);
+      }
       return;
     }
-    this.stopSpeech();
+
     if (!this.voicesLoaded) {
       const voices = window.speechSynthesis.getVoices();
       if (voices.length > 0) {
@@ -453,54 +689,144 @@ class SoundEngine {
       }
     }
 
-    // Gently duck background theme song while narrating
-    this.setSpeechDucking(true);
-    this.duckReleaseTimer = window.setTimeout(() => {
+    // Split text on natural punctuation boundaries to create musical rising & falling intonation
+    const clauses = text
+      .split(/(?<=[!?.,])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (clauses.length === 0) {
       this.setSpeechDucking(false);
-    }, 6500);
-
-    const finishSpeech = () => {
-      this.setSpeechDucking(false);
-    };
-
-    const speakEn = (textToSpeak: string) => {
-      if (!this.sfxEnabled || !textToSpeak) {
-        finishSpeech();
-        return;
-      }
-      try {
-        const uEn = new SpeechSynthesisUtterance(textToSpeak);
-        uEn.lang = 'en-US';
-        if (this.enVoice) uEn.voice = this.enVoice;
-        uEn.rate = 0.92;
-        uEn.pitch = 1.15;
-        uEn.volume = 0.95;
-        uEn.onend = finishSpeech;
-        uEn.onerror = finishSpeech;
-        window.speechSynthesis.speak(uEn);
-      } catch {
-        finishSpeech();
-      }
-    };
-
-    if (this.languageMode === 'en') {
-      speakEn(enText || idText);
+      this.setSpeakingState(false);
       return;
     }
 
-    try {
-      const uId = new SpeechSynthesisUtterance(idText);
-      uId.lang = 'id-ID';
-      if (this.idVoice) uId.voice = this.idVoice;
-      uId.rate = 0.94;
-      uId.pitch = 1.12;
-      uId.volume = 1.0;
-      uId.onend = finishSpeech;
-      uId.onerror = finishSpeech;
-      window.speechSynthesis.speak(uId);
-    } catch {
-      finishSpeech();
+    const moodProfile: Record<NarrationMood, { pitch: number; rate: number }> = {
+      welcome: { pitch: 1.24, rate: 0.96 },
+      explain: { pitch: 1.18, rate: 0.95 },
+      action: { pitch: 1.26, rate: 1.03 },
+      encourage: { pitch: 1.12, rate: 0.91 },
+      celebrate: { pitch: 1.34, rate: 1.01 },
+    };
+    const base = moodProfile[mood];
+
+    const speakClause = (index: number) => {
+      if (seq !== this.speechSeq || !this.sfxEnabled) return;
+      if (index >= clauses.length) {
+        this.setSpeechDucking(false);
+        this.setSpeakingState(false);
+        return;
+      }
+
+      const clause = clauses[index];
+      const endsExclaim = clause.endsWith('!');
+      const endsQuestion = clause.endsWith('?');
+      const endsComma = clause.endsWith(',');
+      const pitchShift = endsExclaim ? 0.08 : endsQuestion ? 0.1 : endsComma ? 0.04 : -0.02;
+      const rateShift = endsExclaim ? 0.03 : endsQuestion ? -0.03 : 0;
+
+      try {
+        const u = new SpeechSynthesisUtterance(clause);
+        u.lang = lang === 'en' ? 'en-US' : 'id-ID';
+        const voice = lang === 'en' ? this.enVoice : this.idVoice;
+        if (voice) u.voice = voice;
+        u.pitch = Math.min(1.55, Math.max(0.9, base.pitch + pitchShift));
+        u.rate = Math.min(1.18, Math.max(0.84, base.rate + rateShift));
+        u.volume = 1.0;
+
+        const nextStep = () => {
+          if (seq !== this.speechSeq) return;
+          if (index + 1 >= clauses.length) {
+            this.setSpeechDucking(false);
+            this.setSpeakingState(false);
+            return;
+          }
+          const pauseMs = endsExclaim || endsQuestion ? 120 : 85;
+          this.speechTimer = window.setTimeout(() => speakClause(index + 1), pauseMs);
+        };
+
+        u.onend = nextStep;
+        u.onerror = nextStep;
+        window.speechSynthesis.speak(u);
+      } catch {
+        this.setSpeechDucking(false);
+        this.setSpeakingState(false);
+      }
+    };
+
+    speakClause(0);
+  }
+
+  public speakBilingual(idText: string, enText?: string, explicitMood?: NarrationMood): void {
+    if (!this.sfxEnabled || typeof window === 'undefined') {
+      return;
     }
+
+    this.stopSpeech();
+    const seq = this.speechSeq;
+
+    const lang: 'id' | 'en' = this.languageMode === 'en' ? 'en' : 'id';
+    const rawText = (lang === 'en' ? enText || idText : idText).trim();
+    if (!rawText) return;
+
+    const mood = explicitMood ?? inferNarrationMood(rawText);
+    const spokenText = enrichTextForChildren(rawText, lang, mood);
+    const cacheKey = `${lang}|${mood}|${spokenText}`;
+
+    // Gently duck background theme song while narrating
+    this.setSpeakingState(true);
+    this.setSpeechDucking(true);
+    this.duckReleaseTimer = window.setTimeout(() => {
+      if (seq === this.speechSeq) {
+        this.setSpeechDucking(false);
+        this.setSpeakingState(false);
+      }
+    }, 11000);
+
+    // 1. Instant hit from browser WAV cache
+    const cachedWav = this.getCachedClientWav(cacheKey);
+    if (cachedWav) {
+      void this.playWavArrayBuffer(cachedWav, seq).then((played) => {
+        if (!played && seq === this.speechSeq) {
+          this.speakWithProsodicBrowserVoice(spokenText, lang, mood, seq);
+        }
+      });
+      return;
+    }
+
+    // 2. Offline check -> go directly to prosodic browser voice
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      this.speakWithProsodicBrowserVoice(spokenText, lang, mood, seq);
+      return;
+    }
+
+    // 3. Request expressive Gemini TTS (Kore) WAV from Express /api/tts with timeout & fallback
+    const controller = new AbortController();
+    this.ttsAbort = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), TTS_FETCH_TIMEOUT_MS);
+
+    void fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: spokenText, language: lang, mood }),
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        window.clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+        const wavBytes = await res.arrayBuffer();
+        if (wavBytes.byteLength <= 44) throw new Error('Invalid WAV audio');
+        this.setCachedClientWav(cacheKey, wavBytes);
+        if (seq !== this.speechSeq) return;
+        const played = await this.playWavArrayBuffer(wavBytes, seq);
+        if (!played && seq === this.speechSeq) {
+          this.speakWithProsodicBrowserVoice(spokenText, lang, mood, seq);
+        }
+      })
+      .catch(() => {
+        window.clearTimeout(timeoutId);
+        if (seq !== this.speechSeq) return;
+        this.speakWithProsodicBrowserVoice(spokenText, lang, mood, seq);
+      });
   }
 
   private playTone(
